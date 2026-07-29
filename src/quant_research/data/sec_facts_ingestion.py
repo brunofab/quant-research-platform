@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 from datetime import date
@@ -15,15 +16,20 @@ from quant_research.database.models import Company, FinancialFact
 BATCH_SIZE = 1000
 
 
-def parse_optional_date(value: str | None) -> date | None:
+def parse_optional_date(
+    value: str | None,
+) -> date | None:
     """Convert an optional ISO date string into a Python date."""
+
     if not value:
         return None
 
     return date.fromisoformat(value)
 
 
-def parse_decimal(value: Any) -> Decimal | None:
+def parse_decimal(
+    value: Any,
+) -> Decimal | None:
     """Convert a numeric SEC value to Decimal."""
 
     if value is None or isinstance(value, bool):
@@ -92,15 +98,23 @@ def transform_company_facts(
 
     rows: list[dict[str, Any]] = []
 
-    taxonomies = company_facts.get("facts", {})
+    taxonomies = company_facts.get(
+        "facts",
+        {},
+    )
 
     for taxonomy, concepts in taxonomies.items():
         for concept, concept_data in concepts.items():
-            units = concept_data.get("units", {})
+            units = concept_data.get(
+                "units",
+                {},
+            )
 
             for unit, facts in units.items():
                 for fact in facts:
-                    value = parse_decimal(fact.get("val"))
+                    value = parse_decimal(
+                        fact.get("val")
+                    )
 
                     if value is None:
                         continue
@@ -114,10 +128,19 @@ def transform_company_facts(
                     period_start = parse_optional_date(
                         fact.get("start")
                     )
-                    period_end = date.fromisoformat(end_raw)
-                    filed_at = date.fromisoformat(filed_raw)
 
-                    accession_number = fact.get("accn")
+                    period_end = date.fromisoformat(
+                        end_raw
+                    )
+
+                    filed_at = date.fromisoformat(
+                        filed_raw
+                    )
+
+                    accession_number = fact.get(
+                        "accn"
+                    )
+
                     form = fact.get("form")
                     fiscal_year = fact.get("fy")
                     fiscal_period = fact.get("fp")
@@ -150,10 +173,14 @@ def transform_company_facts(
                             "period_start": period_start,
                             "period_end": period_end,
                             "filed_at": filed_at,
-                            "accession_number": accession_number,
+                            "accession_number": (
+                                accession_number
+                            ),
                             "form": form,
                             "fiscal_year": fiscal_year,
-                            "fiscal_period": fiscal_period,
+                            "fiscal_period": (
+                                fiscal_period
+                            ),
                             "frame": frame,
                             "source": "SEC",
                         }
@@ -170,8 +197,14 @@ def insert_fact_rows(
 
     inserted = 0
 
-    for start in range(0, len(rows), BATCH_SIZE):
-        batch = rows[start : start + BATCH_SIZE]
+    for start in range(
+        0,
+        len(rows),
+        BATCH_SIZE,
+    ):
+        batch = rows[
+            start : start + BATCH_SIZE
+        ]
 
         statement = (
             insert(FinancialFact)
@@ -179,12 +212,16 @@ def insert_fact_rows(
             .on_conflict_do_nothing(
                 index_elements=["source_key"]
             )
-            .returning(FinancialFact.source_key)
+            .returning(
+                FinancialFact.source_key
+            )
         )
 
         result = session.execute(statement)
 
-        inserted += len(result.scalars().all())
+        inserted += len(
+            result.scalars().all()
+        )
 
     skipped = len(rows) - inserted
 
@@ -192,30 +229,33 @@ def insert_fact_rows(
 
 
 def ingest_company_facts(
-    cik: str | int,
+    ticker: str,
 ) -> None:
     """Download and persist SEC CompanyFacts for one company."""
+
+    ticker = ticker.upper()
 
     engine = create_database_engine()
 
     with Session(engine) as session:
         company = session.scalar(
             select(Company).where(
-                Company.cik == str(cik).zfill(10)
+                Company.ticker == ticker
             )
         )
 
         if company is None:
             raise ValueError(
-                f"Company with CIK {cik} does not exist."
+                f"{ticker} does not exist in companies. "
+                "Ingest company filings first."
             )
 
-        # Store the ticker as a plain Python string while
-        # the SQLAlchemy session is still active.
-        ticker = company.ticker
-
         with SECClient() as sec:
-            company_facts = sec.get_company_facts(cik)
+            company_facts = (
+                sec.get_company_facts(
+                    company.cik
+                )
+            )
 
         rows = transform_company_facts(
             company=company,
@@ -241,8 +281,30 @@ def ingest_company_facts(
     )
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Ingest SEC CompanyFacts for one existing company."
+        )
+    )
+
+    parser.add_argument(
+        "--ticker",
+        required=True,
+        help="Company ticker, for example GOOGL or MSFT.",
+    )
+
+    return parser.parse_args()
+
+
 def main() -> None:
-    ingest_company_facts("1652044")
+    args = parse_args()
+
+    ingest_company_facts(
+        ticker=args.ticker
+    )
 
 
 if __name__ == "__main__":

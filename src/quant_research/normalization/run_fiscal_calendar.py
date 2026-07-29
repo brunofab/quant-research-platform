@@ -1,3 +1,5 @@
+import argparse
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,22 +13,42 @@ from quant_research.normalization.fiscal_calendar import (
 )
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build the fiscal calendar for one company."
+        )
+    )
+
+    parser.add_argument(
+        "--ticker",
+        required=True,
+        help="Company ticker, for example GOOGL or MSFT.",
+    )
+
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
+    ticker = args.ticker.upper()
+
     engine = create_database_engine()
 
     with Session(engine) as session:
         company = session.scalar(
             select(Company).where(
-                Company.ticker == "GOOGL"
+                Company.ticker == ticker
             )
         )
 
         if company is None:
             raise ValueError(
-                "GOOGL does not exist in companies."
+                f"{ticker} does not exist in companies."
             )
-
-        ticker = company.ticker
 
         try:
             authoritative_inserted, existing = (

@@ -1,3 +1,4 @@
+import argparse
 from datetime import date
 
 from sqlalchemy import select
@@ -15,7 +16,9 @@ PERIODIC_FORMS = {
 }
 
 
-def parse_optional_date(value: str | None) -> date | None:
+def parse_optional_date(
+    value: str | None,
+) -> date | None:
     """Convert an ISO date string into a Python date."""
 
     if not value:
@@ -34,7 +37,10 @@ def get_exchange_for_ticker(
     exchanges = submissions.get("exchanges", [])
 
     for index, sec_ticker in enumerate(tickers):
-        if sec_ticker == ticker and index < len(exchanges):
+        if (
+            sec_ticker == ticker
+            and index < len(exchanges)
+        ):
             return exchanges[index]
 
     return None
@@ -51,7 +57,10 @@ def build_filing_url(
         return None
 
     cik_without_leading_zeros = str(int(cik))
-    accession_without_hyphens = accession_number.replace("-", "")
+    accession_without_hyphens = accession_number.replace(
+        "-",
+        "",
+    )
 
     return (
         "https://www.sec.gov/Archives/edgar/data/"
@@ -71,12 +80,45 @@ def get_or_create_company(
 
     cik = format_cik(submissions["cik"])
 
-    company = session.scalar(
-        select(Company).where(Company.cik == cik)
+    company_by_cik = session.scalar(
+        select(Company).where(
+            Company.cik == cik
+        )
     )
 
-    if company is not None:
-        return company
+    company_by_ticker = session.scalar(
+        select(Company).where(
+            Company.ticker == canonical_ticker
+        )
+    )
+
+    if (
+        company_by_cik is not None
+        and company_by_ticker is not None
+        and company_by_cik.id != company_by_ticker.id
+    ):
+        raise ValueError(
+            "Ticker and CIK resolve to different existing companies: "
+            f"ticker={canonical_ticker}, cik={cik}."
+        )
+
+    if company_by_cik is not None:
+        if company_by_cik.ticker != canonical_ticker:
+            raise ValueError(
+                f"CIK {cik} already belongs to ticker "
+                f"{company_by_cik.ticker}, not {canonical_ticker}."
+            )
+
+        return company_by_cik
+
+    if company_by_ticker is not None:
+        if company_by_ticker.cik != cik:
+            raise ValueError(
+                f"Ticker {canonical_ticker} already belongs to CIK "
+                f"{company_by_ticker.cik}, not {cik}."
+            )
+
+        return company_by_ticker
 
     company = Company(
         ticker=canonical_ticker,
@@ -91,10 +133,12 @@ def get_or_create_company(
 
     session.add(company)
 
-    # We need the database-generated company.id before inserting filings.
+    # We need the database-generated company.id
+    # before inserting filings.
     session.flush()
 
     return company
+
 
 def ingest_filings_block(
     session: Session,
@@ -158,6 +202,7 @@ def ingest_filings_block(
 
     return inserted, skipped
 
+
 def ingest_company_filings(
     cik: str | int,
     canonical_ticker: str,
@@ -165,8 +210,13 @@ def ingest_company_filings(
 ) -> None:
     """Download and store all available SEC filing metadata."""
 
+    canonical_ticker = canonical_ticker.upper()
+    formatted_cik = format_cik(cik)
+
     with SECClient() as sec:
-        submissions = sec.get_submissions(cik)
+        submissions = sec.get_submissions(
+            formatted_cik
+        )
 
         historical_files = (
             submissions
@@ -183,7 +233,9 @@ def ingest_company_filings(
                 continue
 
             historical_blocks.append(
-                sec.get_submissions_file(filename)
+                sec.get_submissions_file(
+                    filename
+                )
             )
 
     engine = create_database_engine()
@@ -212,10 +264,12 @@ def ingest_company_filings(
             skipped_total += skipped
 
             for historical_block in historical_blocks:
-                inserted, skipped = ingest_filings_block(
-                    session=session,
-                    company=company,
-                    filings=historical_block,
+                inserted, skipped = (
+                    ingest_filings_block(
+                        session=session,
+                        company=company,
+                        filings=historical_block,
+                    )
                 )
 
                 inserted_total += inserted
@@ -233,11 +287,44 @@ def ingest_company_filings(
         f"{skipped_total} already existed."
     )
 
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Ingest SEC filing metadata for one company."
+        )
+    )
+
+    parser.add_argument(
+        "--ticker",
+        required=True,
+        help="Canonical company ticker, for example GOOGL or MSFT.",
+    )
+
+    parser.add_argument(
+        "--cik",
+        required=True,
+        help="SEC CIK, with or without leading zeros.",
+    )
+
+    parser.add_argument(
+        "--currency",
+        required=True,
+        help="Reporting currency, for example USD.",
+    )
+
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
     ingest_company_filings(
-        cik="1652044",
-        canonical_ticker="GOOGL",
-        currency="USD",
+        cik=args.cik,
+        canonical_ticker=args.ticker.upper(),
+        currency=args.currency.upper(),
     )
 
 
