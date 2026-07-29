@@ -12,6 +12,10 @@ from quant_research.database.models import (
     NormalizedFinancial,
     NormalizedFinancialSource,
 )
+from quant_research.normalization.fiscal_period_resolver import (
+    FiscalPeriodResolver,
+    ResolvedFiscalPeriod,
+)
 
 PERIODIC_FORMS = (
     "10-K",
@@ -117,20 +121,13 @@ def load_flow_facts(
     statement = (
         select(FinancialFact)
         .where(
-            FinancialFact.company_id
-            == company_id,
-            FinancialFact.taxonomy
-            == config.taxonomy,
+            FinancialFact.company_id == company_id,
+            FinancialFact.taxonomy == config.taxonomy,
             FinancialFact.concept.in_(
-                tuple(
-                    config.concept_priority
-                )
+                tuple(config.concept_priority)
             ),
-            FinancialFact.unit
-            == config.unit,
-            FinancialFact.form.in_(
-                PERIODIC_FORMS
-            ),
+            FinancialFact.unit == config.unit,
+            FinancialFact.form.in_(PERIODIC_FORMS),
         )
         .order_by(
             FinancialFact.period_end,
@@ -139,9 +136,7 @@ def load_flow_facts(
     )
 
     return list(
-        session.scalars(
-            statement
-        ).all()
+        session.scalars(statement).all()
     )
 
 
@@ -175,29 +170,20 @@ def deduplicate_flow_facts(
             selected[key] = fact
             continue
 
-        current_priority = (
-            concept_priority.get(
-                fact.concept,
-                999,
-            )
+        current_priority = concept_priority.get(
+            fact.concept,
+            999,
         )
 
-        existing_priority = (
-            concept_priority.get(
-                existing.concept,
-                999,
-            )
+        existing_priority = concept_priority.get(
+            existing.concept,
+            999,
         )
 
-        if (
-            current_priority
-            < existing_priority
-        ):
+        if current_priority < existing_priority:
             selected[key] = fact
 
-    return list(
-        selected.values()
-    )
+    return list(selected.values())
 
 
 def create_normalized_source_key(
@@ -225,24 +211,12 @@ def create_normalized_source_key(
         ),
         "unit": observation.unit,
         "period_type": "quarter",
-        "fiscal_year": (
-            observation.fiscal_year
-        ),
-        "fiscal_quarter": (
-            observation.fiscal_quarter
-        ),
-        "period_start": (
-            observation.period_start.isoformat()
-        ),
-        "period_end": (
-            observation.period_end.isoformat()
-        ),
-        "available_at": (
-            observation.available_at.isoformat()
-        ),
-        "derivation_type": (
-            observation.derivation_type
-        ),
+        "fiscal_year": observation.fiscal_year,
+        "fiscal_quarter": observation.fiscal_quarter,
+        "period_start": observation.period_start.isoformat(),
+        "period_end": observation.period_end.isoformat(),
+        "available_at": observation.available_at.isoformat(),
+        "derivation_type": observation.derivation_type,
         "sources": source_identity,
     }
 
@@ -265,18 +239,14 @@ def store_flow_observation(
 ) -> bool:
     """Persist one normalized observation and its raw-fact lineage."""
 
-    source_key = (
-        create_normalized_source_key(
-            company_id=company_id,
-            metric=metric,
-            observation=observation,
-        )
+    source_key = create_normalized_source_key(
+        company_id=company_id,
+        metric=metric,
+        observation=observation,
     )
 
     existing = session.scalar(
-        select(
-            NormalizedFinancial
-        ).where(
+        select(NormalizedFinancial).where(
             NormalizedFinancial.source_key
             == source_key
         )
@@ -292,22 +262,12 @@ def store_flow_observation(
         value=observation.value,
         unit=observation.unit,
         period_type="quarter",
-        fiscal_year=(
-            observation.fiscal_year
-        ),
-        fiscal_quarter=(
-            observation.fiscal_quarter
-        ),
-        period_start=(
-            observation.period_start
-        ),
+        fiscal_year=observation.fiscal_year,
+        fiscal_quarter=observation.fiscal_quarter,
+        period_start=observation.period_start,
         period_end=observation.period_end,
-        available_at=(
-            observation.available_at
-        ),
-        derivation_type=(
-            observation.derivation_type
-        ),
+        available_at=observation.available_at,
+        derivation_type=observation.derivation_type,
     )
 
     session.add(normalized)
@@ -323,9 +283,7 @@ def store_flow_observation(
     ) in observation.sources:
         session.add(
             NormalizedFinancialSource(
-                normalized_financial_id=(
-                    normalized.id
-                ),
+                normalized_financial_id=normalized.id,
                 financial_fact_id=fact.id,
                 coefficient=coefficient,
                 role=role,
@@ -334,16 +292,226 @@ def store_flow_observation(
 
     return True
 
-CFO_CONFIG = FlowMetricConfig(
-    metric="cfo",
-    concept_priority={
-        "NetCashProvidedByUsedInOperatingActivities": 0,
-    },
-)
 
-CAPEX_CONFIG = FlowMetricConfig(
-    metric="capex",
-    concept_priority={
-        "PaymentsToAcquirePropertyPlantAndEquipment": 0,
-    },
-)
+def matches_cumulative_duration(
+    fact: FinancialFact,
+    fiscal_quarter: int,
+) -> bool:
+    """Check whether a raw fact has the expected cumulative YTD duration."""
+
+    days = period_days(fact)
+
+    duration_checks = {
+        1: is_quarter_duration,
+        2: is_six_month_duration,
+        3: is_nine_month_duration,
+        4: is_full_year_duration,
+    }
+
+    check = duration_checks.get(
+        fiscal_quarter
+    )
+
+    if check is None:
+        return False
+
+    return check(days)
+
+
+def build_cumulative_ytd_observations(
+    facts: list[FinancialFact],
+    resolver: FiscalPeriodResolver,
+) -> list[FlowObservation]:
+    """Convert cumulative YTD facts into standalone quarterly observations."""
+
+    resolved_facts: list[
+        tuple[
+            FinancialFact,
+            ResolvedFiscalPeriod,
+        ]
+    ] = []
+
+    for fact in facts:
+        fiscal_period = (
+            resolver.try_resolve_by_end(
+                fact.period_end
+            )
+        )
+
+        if fiscal_period is None:
+            continue
+
+        if not matches_cumulative_duration(
+            fact,
+            fiscal_period.fiscal_quarter,
+        ):
+            continue
+
+        resolved_facts.append(
+            (
+                fact,
+                fiscal_period,
+            )
+        )
+
+    observations: list[
+        FlowObservation
+    ] = []
+
+    for (
+        current_fact,
+        current_period,
+    ) in resolved_facts:
+        fiscal_year = (
+            current_period.fiscal_year
+        )
+        fiscal_quarter = (
+            current_period.fiscal_quarter
+        )
+
+        quarter_start = (
+            current_period.period_start
+        )
+
+        if quarter_start is None:
+            continue
+
+        # Q1 cumulative YTD is already a standalone quarter.
+        if fiscal_quarter == 1:
+            observations.append(
+                FlowObservation(
+                    value=current_fact.value,
+                    unit=current_fact.unit,
+                    fiscal_year=fiscal_year,
+                    fiscal_quarter=1,
+                    period_start=quarter_start,
+                    period_end=current_fact.period_end,
+                    available_at=current_fact.filed_at,
+                    derivation_type="direct",
+                    sources=(
+                        (
+                            current_fact,
+                            Decimal(1),
+                            "direct",
+                        ),
+                    ),
+                )
+            )
+
+            continue
+
+        prior_quarter = (
+            fiscal_quarter - 1
+        )
+
+        prior_candidates = [
+            fact
+            for fact, period
+            in resolved_facts
+            if (
+                period.fiscal_year
+                == fiscal_year
+                and period.fiscal_quarter
+                == prior_quarter
+                and fact.filed_at
+                <= current_fact.filed_at
+            )
+        ]
+
+        if not prior_candidates:
+            continue
+
+        # Use the newest previous cumulative value
+        # that was available when the current fact was filed.
+        prior_fact = max(
+            prior_candidates,
+            key=lambda fact: (
+                fact.filed_at,
+                fact.accession_number or "",
+                fact.id,
+            ),
+        )
+
+        observations.append(
+            FlowObservation(
+                value=(
+                    current_fact.value
+                    - prior_fact.value
+                ),
+                unit=current_fact.unit,
+                fiscal_year=fiscal_year,
+                fiscal_quarter=fiscal_quarter,
+                period_start=quarter_start,
+                period_end=current_fact.period_end,
+                available_at=max(
+                    current_fact.filed_at,
+                    prior_fact.filed_at,
+                ),
+                derivation_type="ytd_difference",
+                sources=(
+                    (
+                        current_fact,
+                        Decimal(1),
+                        "ytd_current",
+                    ),
+                    (
+                        prior_fact,
+                        Decimal(-1),
+                        "ytd_prior",
+                    ),
+                ),
+            )
+        )
+
+    return observations
+
+
+def normalize_cumulative_ytd_metric(
+    session: Session,
+    company_id: int,
+    config: FlowMetricConfig,
+) -> tuple[int, int]:
+    """Normalize a cumulative-YTD SEC flow metric into quarters."""
+
+    resolver = FiscalPeriodResolver(
+        session=session,
+        company_id=company_id,
+    )
+
+    raw_facts = load_flow_facts(
+        session=session,
+        company_id=company_id,
+        config=config,
+    )
+
+    facts = deduplicate_flow_facts(
+        facts=raw_facts,
+        concept_priority=config.concept_priority,
+    )
+
+    observations = (
+        build_cumulative_ytd_observations(
+            facts=facts,
+            resolver=resolver,
+        )
+    )
+
+    inserted = 0
+    skipped = 0
+
+    for observation in observations:
+        was_inserted = (
+            store_flow_observation(
+                session=session,
+                company_id=company_id,
+                metric=config.metric,
+                observation=observation,
+            )
+        )
+
+        if was_inserted:
+            inserted += 1
+        else:
+            skipped += 1
+
+    return inserted, skipped
