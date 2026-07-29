@@ -333,3 +333,17 @@ def store_flow_observation(
         )
 
     return True
+
+CFO_CONFIG = FlowMetricConfig(
+    metric="cfo",
+    concept_priority={
+        "NetCashProvidedByUsedInOperatingActivities": 0,
+    },
+)
+
+CAPEX_CONFIG = FlowMetricConfig(
+    metric="capex",
+    concept_priority={
+        "PaymentsToAcquirePropertyPlantAndEquipment": 0,
+    },
+)

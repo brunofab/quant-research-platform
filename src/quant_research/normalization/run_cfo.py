@@ -3,16 +3,18 @@ import argparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from quant_research.database.connection import create_database_engine
+from quant_research.database.connection import (
+    create_database_engine,
+)
 from quant_research.database.models import Company
-from quant_research.normalization.revenue import normalize_revenue
+from quant_research.normalization.cfo import normalize_cfo
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Normalize quarterly revenue for one company."
+        description="Normalize quarterly operating cash flow."
     )
 
     parser.add_argument(
@@ -44,7 +46,7 @@ def main() -> None:
             )
 
         try:
-            inserted, skipped = normalize_revenue(
+            inserted, skipped = normalize_cfo(
                 session,
                 company,
             )
@@ -56,7 +58,7 @@ def main() -> None:
             raise
 
     print(
-        f"{ticker} revenue normalization: "
+        f"{ticker} CFO normalization: "
         f"{inserted} inserted, "
         f"{skipped} already existed."
     )
