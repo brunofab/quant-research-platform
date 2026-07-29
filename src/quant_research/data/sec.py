@@ -68,6 +68,26 @@ class SECClient:
             f"/submissions/CIK{cik_padded}.json"
         )
 
+    def get_submissions_file(
+        self,
+        filename: str,
+    ) -> dict[str, Any]:
+        """Fetch one historical SEC submissions file."""
+
+        if "/" in filename or "\\" in filename:
+            raise ValueError(
+                "SEC submissions filename must not contain a path."
+            )
+
+        if not filename.endswith(".json"):
+            raise ValueError(
+                "SEC submissions filename must be a JSON file."
+            )
+
+        return self._get_json(
+            f"/submissions/{filename}"
+        )
+
     def get_company_facts(self, cik: str | int) -> dict[str, Any]:
         cik_padded = format_cik(cik)
 

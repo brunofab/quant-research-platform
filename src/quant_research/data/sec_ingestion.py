@@ -96,30 +96,33 @@ def get_or_create_company(
 
     return company
 
-
-def ingest_recent_filings(
+def ingest_filings_block(
     session: Session,
     company: Company,
-    submissions: dict,
+    filings: dict,
 ) -> tuple[int, int]:
-    """Insert recent periodic SEC filings without creating duplicates."""
-
-    recent = submissions["filings"]["recent"]
+    """Insert periodic filings from one SEC filing block."""
 
     inserted = 0
     skipped = 0
 
-    accession_numbers = recent["accessionNumber"]
+    accession_numbers = filings.get(
+        "accessionNumber",
+        [],
+    )
 
-    for index, accession_number in enumerate(accession_numbers):
-        form = recent["form"][index]
+    for index, accession_number in enumerate(
+        accession_numbers
+    ):
+        form = filings["form"][index]
 
         if form not in PERIODIC_FORMS:
             continue
 
         existing_filing = session.scalar(
             select(Filing).where(
-                Filing.accession_number == accession_number
+                Filing.accession_number
+                == accession_number
             )
         )
 
@@ -127,17 +130,20 @@ def ingest_recent_filings(
             skipped += 1
             continue
 
-        primary_document = recent["primaryDocument"][index] or None
+        primary_document = (
+            filings["primaryDocument"][index]
+            or None
+        )
 
         filing = Filing(
             company_id=company.id,
             accession_number=accession_number,
             form=form,
             filing_date=date.fromisoformat(
-                recent["filingDate"][index]
+                filings["filingDate"][index]
             ),
             report_date=parse_optional_date(
-                recent["reportDate"][index]
+                filings["reportDate"][index]
             ),
             primary_document=primary_document,
             source_url=build_filing_url(
@@ -152,16 +158,33 @@ def ingest_recent_filings(
 
     return inserted, skipped
 
-
 def ingest_company_filings(
     cik: str | int,
     canonical_ticker: str,
     currency: str | None = None,
 ) -> None:
-    """Download and store a company's recent SEC filing metadata."""
+    """Download and store all available SEC filing metadata."""
 
     with SECClient() as sec:
         submissions = sec.get_submissions(cik)
+
+        historical_files = (
+            submissions
+            .get("filings", {})
+            .get("files", [])
+        )
+
+        historical_blocks = []
+
+        for file_metadata in historical_files:
+            filename = file_metadata.get("name")
+
+            if not filename:
+                continue
+
+            historical_blocks.append(
+                sec.get_submissions_file(filename)
+            )
 
     engine = create_database_engine()
 
@@ -174,11 +197,29 @@ def ingest_company_filings(
                 currency=currency,
             )
 
-            inserted, skipped = ingest_recent_filings(
+            inserted_total = 0
+            skipped_total = 0
+
+            recent = submissions["filings"]["recent"]
+
+            inserted, skipped = ingest_filings_block(
                 session=session,
                 company=company,
-                submissions=submissions,
+                filings=recent,
             )
+
+            inserted_total += inserted
+            skipped_total += skipped
+
+            for historical_block in historical_blocks:
+                inserted, skipped = ingest_filings_block(
+                    session=session,
+                    company=company,
+                    filings=historical_block,
+                )
+
+                inserted_total += inserted
+                skipped_total += skipped
 
             session.commit()
 
@@ -188,10 +229,9 @@ def ingest_company_filings(
 
     print(
         f"{canonical_ticker}: "
-        f"{inserted} filings inserted, "
-        f"{skipped} already existed."
+        f"{inserted_total} filings inserted, "
+        f"{skipped_total} already existed."
     )
-
 
 def main() -> None:
     ingest_company_filings(
