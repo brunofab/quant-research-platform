@@ -13,6 +13,9 @@ from quant_research.database.models import (
     NormalizedFinancial,
     NormalizedFinancialSource,
 )
+from quant_research.normalization.fiscal_period_resolver import (
+    FiscalPeriodResolver,
+)
 
 REVENUE_CONCEPT_PRIORITY = {
     "Revenues": 0,
@@ -66,19 +69,6 @@ def is_full_year_duration(days: int | None) -> bool:
 
     return days is not None and 350 <= days <= 380
 
-def infer_calendar_quarter(period_end: date) -> int:
-    """Infer the calendar quarter from the period end month."""
-
-    if period_end.month <= 3:
-        return 1
-
-    if period_end.month <= 6:
-        return 2
-
-    if period_end.month <= 9:
-        return 3
-
-    return 4
 
 def load_revenue_facts(
     session: Session,
@@ -151,6 +141,7 @@ def deduplicate_revenue_facts(
 
 def build_direct_quarter_observations(
     facts: list[FinancialFact],
+    resolver: FiscalPeriodResolver,
 ) -> list[RevenueObservation]:
     """Build direct quarterly revenue observations."""
 
@@ -162,22 +153,24 @@ def build_direct_quarter_observations(
         if not is_quarter_duration(days):
             continue
 
-        quarter = infer_calendar_quarter(
+        if fact.period_start is None:
+            continue
+
+        fiscal_period = resolver.resolve_by_end(
             fact.period_end
         )
 
-        if quarter == 4:
-            continue
-
-        if fact.period_start is None:
+        if fiscal_period.fiscal_quarter == 4:
             continue
 
         observations.append(
             RevenueObservation(
                 value=fact.value,
                 unit=fact.unit,
-                fiscal_year=fact.period_end.year,
-                fiscal_quarter=quarter,
+                fiscal_year=fiscal_period.fiscal_year,
+                fiscal_quarter=(
+                    fiscal_period.fiscal_quarter
+                ),
                 period_start=fact.period_start,
                 period_end=fact.period_end,
                 available_at=fact.filed_at,
@@ -196,19 +189,24 @@ def build_direct_quarter_observations(
 
 def build_q4_observations(
     facts: list[FinancialFact],
+    resolver: FiscalPeriodResolver,
 ) -> list[RevenueObservation]:
     """Derive Q4 revenue as full-year revenue minus nine-month revenue."""
 
     annual_facts = [
         fact
         for fact in facts
-        if is_full_year_duration(period_days(fact))
+        if is_full_year_duration(
+            period_days(fact)
+        )
     ]
 
     nine_month_facts = [
         fact
         for fact in facts
-        if is_nine_month_duration(period_days(fact))
+        if is_nine_month_duration(
+            period_days(fact)
+        )
     ]
 
     observations: list[RevenueObservation] = []
@@ -217,16 +215,36 @@ def build_q4_observations(
         if annual_fact.period_start is None:
             continue
 
-        year = annual_fact.period_end.year
+        fiscal_period = resolver.resolve_by_end(
+            annual_fact.period_end
+        )
 
-        candidates = [
-            fact
-            for fact in nine_month_facts
-            if fact.period_start is not None
-            and fact.period_end.year == year
-            and fact.period_start.year == year
-            and fact.filed_at <= annual_fact.filed_at
-        ]
+        if fiscal_period.fiscal_quarter != 4:
+            continue
+
+        fiscal_year = fiscal_period.fiscal_year
+
+        candidates = []
+
+        for fact in nine_month_facts:
+            try:
+                candidate_period = (
+                    resolver.resolve_by_end(
+                        fact.period_end
+                    )
+                )
+            except ValueError:
+                continue
+
+            if (
+                candidate_period.fiscal_year
+                == fiscal_year
+                and candidate_period.fiscal_quarter
+                == 3
+                and fact.filed_at
+                <= annual_fact.filed_at
+            ):
+                candidates.append(fact)
 
         if not candidates:
             continue
@@ -241,17 +259,18 @@ def build_q4_observations(
             - nine_month_fact.value
         )
 
-        quarter_start = date(
-            year,
-            10,
-            1,
+        quarter_start = (
+            fiscal_period.period_start
         )
+
+        if quarter_start is None:
+            continue
 
         observations.append(
             RevenueObservation(
                 value=value,
                 unit=annual_fact.unit,
-                fiscal_year=year,
+                fiscal_year=fiscal_year,
                 fiscal_quarter=4,
                 period_start=quarter_start,
                 period_end=annual_fact.period_end,
@@ -376,6 +395,11 @@ def normalize_revenue(
 ) -> tuple[int, int]:
     """Normalize quarterly revenue for one company."""
 
+    resolver = FiscalPeriodResolver(
+        session=session,
+        company_id=company.id,
+    )
+
     raw_facts = load_revenue_facts(
         session,
         company.id,
@@ -386,8 +410,14 @@ def normalize_revenue(
     )
 
     observations = (
-        build_direct_quarter_observations(facts)
-        + build_q4_observations(facts)
+        build_direct_quarter_observations(
+            facts,
+            resolver,
+        )
+        + build_q4_observations(
+            facts,
+            resolver,
+        )
     )
 
     inserted = 0
