@@ -385,3 +385,17 @@ class FiscalPeriod(Base):
         nullable=False,
     )
 
+    derivation_type: Mapped[str] = mapped_column(
+    String(50),
+    nullable=False,
+    )
+
+    source_fact_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "financial_facts.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
