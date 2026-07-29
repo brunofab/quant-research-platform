@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     postgres_user: str
     postgres_password: str
 
+    sec_user_agent: str
 
 @lru_cache
 def get_settings() -> Settings:

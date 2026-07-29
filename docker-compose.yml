@@ -32,6 +32,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SEC_USER_AGENT: ${SEC_USER_AGENT}
 
     depends_on:
       db:
