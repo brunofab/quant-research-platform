@@ -156,11 +156,14 @@ def build_direct_quarter_observations(
         if fact.period_start is None:
             continue
 
-        fiscal_period = resolver.resolve_by_end(
+        fiscal_period = resolver.try_resolve_by_end(
             fact.period_end
         )
 
-        if fiscal_period.fiscal_quarter == 4 or fiscal_period is None:
+        if fiscal_period is None:
+            continue
+
+        if fiscal_period.fiscal_quarter == 4:
             continue
 
         observations.append(
@@ -168,9 +171,7 @@ def build_direct_quarter_observations(
                 value=fact.value,
                 unit=fact.unit,
                 fiscal_year=fiscal_period.fiscal_year,
-                fiscal_quarter=(
-                    fiscal_period.fiscal_quarter
-                ),
+                fiscal_quarter=fiscal_period.fiscal_quarter,
                 period_start=fact.period_start,
                 period_end=fact.period_end,
                 available_at=fact.filed_at,
@@ -215,33 +216,32 @@ def build_q4_observations(
         if annual_fact.period_start is None:
             continue
 
-        fiscal_period = resolver.resolve_by_end(
+        fiscal_period = resolver.try_resolve_by_end(
             annual_fact.period_end
         )
+
+        if fiscal_period is None:
+            continue
 
         if fiscal_period.fiscal_quarter != 4:
             continue
 
         fiscal_year = fiscal_period.fiscal_year
 
-        candidates = []
+        candidates: list[FinancialFact] = []
 
         for fact in nine_month_facts:
-            
             candidate_period = resolver.try_resolve_by_end(
                 fact.period_end
             )
 
             if candidate_period is None:
-                continue 
+                continue
 
             if (
-                candidate_period.fiscal_year
-                == fiscal_year
-                and candidate_period.fiscal_quarter
-                == 3
-                and fact.filed_at
-                <= annual_fact.filed_at
+                candidate_period.fiscal_year == fiscal_year
+                and candidate_period.fiscal_quarter == 3
+                and fact.filed_at <= annual_fact.filed_at
             ):
                 candidates.append(fact)
 
@@ -258,9 +258,7 @@ def build_q4_observations(
             - nine_month_fact.value
         )
 
-        quarter_start = (
-            fiscal_period.period_start
-        )
+        quarter_start = fiscal_period.period_start
 
         if quarter_start is None:
             continue
