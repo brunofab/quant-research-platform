@@ -1,6 +1,5 @@
 from quant_research.data.sec import SECClient
 
-
 ALPHABET_CIK = "1652044"
 
 

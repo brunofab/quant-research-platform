@@ -1,13 +1,11 @@
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from quant_research.database.base import Base
 
-from decimal import Decimal
-
-from sqlalchemy import Numeric
 
 class Company(Base):
     __tablename__ = "companies"

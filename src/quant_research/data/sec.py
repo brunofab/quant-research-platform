@@ -1,10 +1,9 @@
 import time
-from typing import Any
+from typing import Any, Self
 
 import httpx
 
 from quant_research.settings import get_settings
-
 
 SEC_BASE_URL = "https://data.sec.gov"
 
@@ -79,7 +78,7 @@ class SECClient:
     def close(self) -> None:
         self.client.close()
 
-    def __enter__(self) -> "SECClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:
