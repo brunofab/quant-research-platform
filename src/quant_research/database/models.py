@@ -322,6 +322,43 @@ class NormalizedFinancialSource(Base):
         nullable=False,
     )
 
+class NormalizedFinancialDependency(Base):
+    __tablename__ = "normalized_financial_dependencies"
+
+    __table_args__ = (
+        CheckConstraint(
+            "derived_financial_id <> source_financial_id",
+            name="ck_normalized_financial_dependencies_not_self",
+        ),
+    )
+
+    derived_financial_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "normalized_financials.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+
+    source_financial_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "normalized_financials.id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+        index=True,
+    )
+
+    coefficient: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 6),
+        nullable=True,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
 class FiscalPeriod(Base):
     __tablename__ = "fiscal_periods"
 
