@@ -18,7 +18,7 @@ class ResolvedFiscalPeriod:
 
 
 class FiscalPeriodResolver:
-    """Resolve economic periods using the company-specific fiscal calendar."""
+    """Resolve economic periods using a company-specific fiscal calendar."""
 
     def __init__(
         self,
@@ -31,8 +31,7 @@ class FiscalPeriodResolver:
             session.scalars(
                 select(FiscalPeriod)
                 .where(
-                    FiscalPeriod.company_id
-                    == company_id
+                    FiscalPeriod.company_id == company_id
                 )
                 .order_by(FiscalPeriod.period_end)
             ).all()
@@ -40,8 +39,7 @@ class FiscalPeriodResolver:
 
         if not periods:
             raise ValueError(
-                f"No fiscal periods exist for company "
-                f"{company_id}."
+                f"No fiscal periods exist for company {company_id}."
             )
 
         self._by_end = {
@@ -49,20 +47,16 @@ class FiscalPeriodResolver:
             for period in periods
         }
 
-    def resolve_by_end(
+    def try_resolve_by_end(
         self,
         period_end: date,
-    ) -> ResolvedFiscalPeriod:
-        """Resolve a fiscal quarter from its economic period end."""
+    ) -> ResolvedFiscalPeriod | None:
+        """Resolve a fiscal period, returning None if it is unavailable."""
 
         period = self._by_end.get(period_end)
 
         if period is None:
-            raise ValueError(
-                "Unable to resolve fiscal period for "
-                f"company {self.company_id} with "
-                f"period_end={period_end}."
-            )
+            return None
 
         return ResolvedFiscalPeriod(
             fiscal_year=period.fiscal_year,
@@ -71,3 +65,19 @@ class FiscalPeriodResolver:
             period_end=period.period_end,
         )
 
+    def resolve_by_end(
+        self,
+        period_end: date,
+    ) -> ResolvedFiscalPeriod:
+        """Resolve a fiscal period or fail if it is unavailable."""
+
+        resolved = self.try_resolve_by_end(period_end)
+
+        if resolved is None:
+            raise ValueError(
+                "Unable to resolve fiscal period for "
+                f"company {self.company_id} with "
+                f"period_end={period_end}."
+            )
+
+        return resolved
