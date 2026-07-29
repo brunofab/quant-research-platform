@@ -210,6 +210,10 @@ def ingest_company_facts(
                 f"Company with CIK {cik} does not exist."
             )
 
+        # Store the ticker as a plain Python string while
+        # the SQLAlchemy session is still active.
+        ticker = company.ticker
+
         with SECClient() as sec:
             company_facts = sec.get_company_facts(cik)
 
@@ -231,7 +235,7 @@ def ingest_company_facts(
             raise
 
     print(
-        f"{company.ticker}: "
+        f"{ticker}: "
         f"{inserted} financial facts inserted, "
         f"{skipped} already existed."
     )
