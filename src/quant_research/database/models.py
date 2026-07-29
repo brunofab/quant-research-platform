@@ -1,7 +1,17 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Numeric, String
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from quant_research.database.base import Base
@@ -311,3 +321,67 @@ class NormalizedFinancialSource(Base):
         String(50),
         nullable=False,
     )
+
+class FiscalPeriod(Base):
+    __tablename__ = "fiscal_periods"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "fiscal_year",
+            "fiscal_quarter",
+            name="uq_fiscal_periods_company_year_quarter",
+        ),
+        CheckConstraint(
+            "fiscal_quarter BETWEEN 1 AND 4",
+            name="ck_fiscal_periods_quarter",
+        ),
+        Index(
+            "ix_fiscal_periods_company_period_end",
+            "company_id",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    fiscal_year: Mapped[int] = mapped_column(
+        nullable=False,
+        index=True,
+    )
+
+    fiscal_quarter: Mapped[int] = mapped_column(
+        nullable=False,
+    )
+
+    period_start: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    period_end: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+    )
+
+    source_filing_id: Mapped[int] = mapped_column(
+        ForeignKey("filings.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
