@@ -200,3 +200,114 @@ class FinancialFact(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
+class NormalizedFinancial(Base):
+    __tablename__ = "normalized_financials"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    source_key: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    metric: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    value: Mapped[Decimal] = mapped_column(
+        Numeric(30, 6),
+        nullable=False,
+    )
+
+    unit: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    period_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        index=True,
+    )
+
+    fiscal_year: Mapped[int] = mapped_column(
+        nullable=False,
+        index=True,
+    )
+
+    fiscal_quarter: Mapped[int | None] = mapped_column(
+        nullable=True,
+    )
+
+    period_start: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    period_end: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    available_at: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    derivation_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+class NormalizedFinancialSource(Base):
+    __tablename__ = "normalized_financial_sources"
+
+    normalized_financial_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "normalized_financials.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+
+    financial_fact_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "financial_facts.id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+        index=True,
+    )
+
+    coefficient: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6),
+        nullable=False,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
