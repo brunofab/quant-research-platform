@@ -113,6 +113,13 @@ class FinancialFact(Base):
         autoincrement=True,
     )
 
+    source_key: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
     company_id: Mapped[int] = mapped_column(
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,

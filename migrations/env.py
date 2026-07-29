@@ -1,12 +1,10 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-from sqlalchemy import URL
 from alembic import context
+from sqlalchemy import URL, engine_from_config, pool
 
-from quant_research.database.base import Base
 from quant_research.database import models  # noqa: F401
+from quant_research.database.base import Base
 from quant_research.settings import get_settings
 
 # this is the Alembic Config object, which provides
