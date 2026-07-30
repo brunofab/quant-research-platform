@@ -132,6 +132,51 @@ def print_signals(
             f"{format_percentage_points(snapshot.fcf_margin_yoy_delta_qoq_delta):>10}"
         )
 
+def print_signal_details(
+    signals: list[CapitalCycleSignal],
+) -> None:
+    """Print structured component states and explanations."""
+
+    if not signals:
+        return
+
+    print()
+    print("Component diagnostics")
+    print("-" * 88)
+
+    for signal in signals:
+        snapshot = signal.snapshot
+
+        fiscal_period = (
+            f"FY{snapshot.fiscal_year} "
+            f"Q{snapshot.fiscal_quarter}"
+        )
+
+        print(
+            f"{fiscal_period} | "
+            f"{signal.regime.value}"
+        )
+
+        print(
+            "  "
+            f"investment pressure: "
+            f"{signal.investment_pressure.value}; "
+            f"cashflow pressure: "
+            f"{signal.cashflow_pressure.value}"
+        )
+
+        print(
+            "  "
+            f"investment momentum: "
+            f"{signal.investment_momentum.value}; "
+            f"cashflow momentum: "
+            f"{signal.cashflow_momentum.value}"
+        )
+
+        print(
+            f"  reason: "
+            f"{signal.classification_reason}"
+        )
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -164,6 +209,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Historical information cutoff in YYYY-MM-DD format."
+        ),
+    )
+
+    parser.add_argument(
+        "--details",
+        action="store_true",
+        help=(
+            "Show component states and classification reasons."
         ),
     )
 
@@ -232,6 +285,11 @@ def main() -> None:
         signals=selected_signals,
         requested_as_of=args.as_of,
     )
+
+    if args.details:
+        print_signal_details(
+            signals=selected_signals
+        )
 
 
 if __name__ == "__main__":
