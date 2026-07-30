@@ -12,15 +12,31 @@ from quant_research.database.models import Company
 from quant_research.normalization.fiscal_period_resolver import (
     FiscalPeriodResolver,
 )
+from quant_research.signals.capital_cycle_diagnostics import (
+    CapitalCycleDiagnostics,
+    build_capital_cycle_diagnostics,
+)
 from quant_research.signals.capital_cycle_features import (
     build_capital_cycle_feature_snapshots,
     load_capital_cycle_feature_observations,
     select_latest_snapshot_per_period,
 )
 from quant_research.signals.capital_cycle_regime import (
+    CapitalCycleRegime,
     CapitalCycleSignal,
     classify_capital_cycle_snapshots,
 )
+
+FEATURE_LABELS = {
+    "capex_growth_gap": "Growth gap",
+    "capex_intensity_yoy_delta": "Intensity YoY",
+    "fcf_margin_yoy_delta": "FCF margin YoY",
+    "capex_growth_gap_qoq_delta": "Growth-gap QoQ",
+    "capex_intensity_yoy_delta_qoq_delta": (
+        "Intensity QoQ"
+    ),
+    "fcf_margin_yoy_delta_qoq_delta": "FCF QoQ",
+}
 
 
 def parse_iso_date(value: str) -> date:
@@ -132,10 +148,11 @@ def print_signals(
             f"{format_percentage_points(snapshot.fcf_margin_yoy_delta_qoq_delta):>10}"
         )
 
+
 def print_signal_details(
     signals: list[CapitalCycleSignal],
 ) -> None:
-    """Print structured component states and explanations."""
+    """Print component states and classification explanations."""
 
     if not signals:
         return
@@ -178,6 +195,152 @@ def print_signal_details(
             f"{signal.classification_reason}"
         )
 
+
+def print_diagnostics(
+    diagnostics: CapitalCycleDiagnostics,
+) -> None:
+    """Print historical regime and feature diagnostics."""
+
+    print()
+    print("Historical calibration diagnostics")
+    print("-" * 72)
+
+    if diagnostics.total_periods == 0:
+        print(
+            "No complete historical signals are available."
+        )
+        return
+
+    first_period = diagnostics.first_period
+    last_period = diagnostics.last_period
+
+    if first_period is None or last_period is None:
+        raise ValueError(
+            "Non-empty diagnostics have no coverage periods."
+        )
+
+    print(
+        "Coverage: "
+        f"FY{first_period[0]} Q{first_period[1]} "
+        "to "
+        f"FY{last_period[0]} Q{last_period[1]}"
+    )
+
+    print(
+        f"Complete periods: {diagnostics.total_periods}"
+    )
+
+    print(
+        f"Regime switches: {diagnostics.regime_switches}"
+    )
+
+    print(
+        "Average uninterrupted regime length: "
+        f"{diagnostics.average_run_length:.2f} quarters"
+    )
+
+    if diagnostics.longest_run is not None:
+        longest = diagnostics.longest_run
+
+        print(
+            "Longest run: "
+            f"{longest.regime.value}, "
+            f"FY{longest.start_fiscal_year} "
+            f"Q{longest.start_fiscal_quarter} to "
+            f"FY{longest.end_fiscal_year} "
+            f"Q{longest.end_fiscal_quarter} "
+            f"({longest.length} quarters)"
+        )
+
+    print()
+    print("Regime distribution")
+    print(
+        f"{'Regime':<18}"
+        f"{'Count':>8}"
+        f"{'Share':>10}"
+    )
+    print("-" * 36)
+
+    for regime in CapitalCycleRegime:
+        count = diagnostics.regime_counts[
+            regime
+        ]
+
+        share = (
+            diagnostics.regime_shares[
+                regime
+            ]
+            * Decimal(100)
+        )
+
+        print(
+            f"{regime.value:<18}"
+            f"{count:>8}"
+            f"{share:>9.1f}%"
+        )
+
+    print()
+    print("Observed consecutive-period transitions")
+    print(
+        f"{'From':<18}"
+        f"{'To':<18}"
+        f"{'Count':>8}"
+    )
+    print("-" * 44)
+
+    ordered_transitions = sorted(
+        diagnostics.transitions.items(),
+        key=lambda item: (
+            -item[1],
+            item[0][0].value,
+            item[0][1].value,
+        ),
+    )
+
+    for (
+        source,
+        destination,
+    ), count in ordered_transitions:
+        print(
+            f"{source.value:<18}"
+            f"{destination.value:<18}"
+            f"{count:>8}"
+        )
+
+    print()
+    print("Historical feature distributions")
+    print(
+        "All values below are percentage points."
+    )
+
+    print(
+        f"{'Feature':<22}"
+        f"{'Min':>9}"
+        f"{'P25':>9}"
+        f"{'Median':>9}"
+        f"{'P75':>9}"
+        f"{'Max':>9}"
+    )
+
+    print("-" * 76)
+
+    for feature_name, label in FEATURE_LABELS.items():
+        distribution = (
+            diagnostics.feature_distributions[
+                feature_name
+            ]
+        )
+
+        print(
+            f"{label:<22}"
+            f"{format_percentage_points(distribution.minimum):>9}"
+            f"{format_percentage_points(distribution.p25):>9}"
+            f"{format_percentage_points(distribution.median):>9}"
+            f"{format_percentage_points(distribution.p75):>9}"
+            f"{format_percentage_points(distribution.maximum):>9}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
@@ -217,6 +380,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Show component states and classification reasons."
+        ),
+    )
+
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help=(
+            "Show historical regime and feature diagnostics."
         ),
     )
 
@@ -261,9 +432,8 @@ def main() -> None:
             )
         )
 
-        # Select all historical periods before classifying.
-        # Reacceleration depends on the immediately preceding
-        # fiscal period, including periods outside --latest.
+        # Keep all historical periods available for classification.
+        # Reacceleration depends on the immediately preceding period.
         latest_per_period = (
             select_latest_snapshot_per_period(
                 snapshots=snapshots,
@@ -280,6 +450,14 @@ def main() -> None:
             -args.latest:
         ]
 
+        # Diagnostics use the full classified history rather than
+        # only the periods selected through --latest.
+        diagnostics = (
+            build_capital_cycle_diagnostics(
+                signals=signals
+            )
+        )
+
     print_signals(
         ticker=ticker,
         signals=selected_signals,
@@ -289,6 +467,11 @@ def main() -> None:
     if args.details:
         print_signal_details(
             signals=selected_signals
+        )
+
+    if args.diagnostics:
+        print_diagnostics(
+            diagnostics=diagnostics
         )
 
 
