@@ -5,8 +5,10 @@ from enum import Enum
 from quant_research.signals.capital_cycle_features import (
     CapitalCycleFeatureSnapshot,
 )
+from quant_research.signals.capital_cycle_thresholds import (
+    CapitalCycleThresholds,
+)
 
-ZERO = Decimal(0)
 PERCENT = Decimal(100)
 
 
@@ -50,6 +52,7 @@ class CapitalCycleSignal:
 
     snapshot: CapitalCycleFeatureSnapshot
     regime: CapitalCycleRegime
+    thresholds: CapitalCycleThresholds
 
     investment_pressure: PressureState
     cashflow_pressure: PressureState
@@ -130,6 +133,8 @@ class CapitalCycleSignal:
             ),
             "period_end": snapshot.period_end.isoformat(),
             "as_of": snapshot.as_of.isoformat(),
+            "classifier": self.thresholds.name,
+            "thresholds": self.thresholds.to_payload(),
             "regime": self.regime.value,
             "previous_regime": (
                 self.previous_regime.value
@@ -204,8 +209,9 @@ def previous_fiscal_period_key(
 
 def determine_investment_momentum(
     snapshot: CapitalCycleFeatureSnapshot,
+    thresholds: CapitalCycleThresholds,
 ) -> InvestmentMomentumState:
-    """Classify the direction of investment pressure."""
+    """Classify investment momentum using configured deadbands."""
 
     gap_momentum = (
         snapshot.capex_growth_gap_qoq_delta
@@ -217,20 +223,26 @@ def determine_investment_momentum(
     )
 
     if (
-        gap_momentum > ZERO
-        and intensity_momentum > ZERO
+        gap_momentum
+        > thresholds.growth_gap_momentum
+        and intensity_momentum
+        > thresholds.capex_intensity_momentum
     ):
         return InvestmentMomentumState.ACCELERATING
 
     if (
-        gap_momentum < ZERO
-        and intensity_momentum < ZERO
+        gap_momentum
+        < -thresholds.growth_gap_momentum
+        and intensity_momentum
+        < -thresholds.capex_intensity_momentum
     ):
         return InvestmentMomentumState.EASING
 
     if (
-        gap_momentum == ZERO
-        and intensity_momentum == ZERO
+        abs(gap_momentum)
+        <= thresholds.growth_gap_momentum
+        and abs(intensity_momentum)
+        <= thresholds.capex_intensity_momentum
     ):
         return InvestmentMomentumState.FLAT
 
@@ -239,17 +251,24 @@ def determine_investment_momentum(
 
 def determine_cashflow_momentum(
     snapshot: CapitalCycleFeatureSnapshot,
+    thresholds: CapitalCycleThresholds,
 ) -> CashflowMomentumState:
-    """Classify the direction of cashflow pressure."""
+    """Classify cashflow momentum using a deadband."""
 
     momentum = (
         snapshot.fcf_margin_yoy_delta_qoq_delta
     )
 
-    if momentum > ZERO:
+    if (
+        momentum
+        > thresholds.fcf_margin_momentum
+    ):
         return CashflowMomentumState.IMPROVING
 
-    if momentum < ZERO:
+    if (
+        momentum
+        < -thresholds.fcf_margin_momentum
+    ):
         return CashflowMomentumState.WORSENING
 
     return CashflowMomentumState.FLAT
@@ -257,18 +276,16 @@ def determine_cashflow_momentum(
 
 def build_classification_reason(
     regime: CapitalCycleRegime,
-    investment_pressure: PressureState,
-    cashflow_pressure: PressureState,
     investment_momentum: InvestmentMomentumState,
     cashflow_momentum: CashflowMomentumState,
     previous_regime: CapitalCycleRegime | None,
 ) -> str:
-    """Build a concise explanation of the regime classification."""
+    """Build a concise explanation of the classification."""
 
     if regime is CapitalCycleRegime.HARVEST:
         return (
             "Investment pressure has normalized while the "
-            "free-cashflow margin is at or above its "
+            "free-cashflow margin is clearly above its "
             "prior-year level."
         )
 
@@ -304,59 +321,62 @@ def build_classification_reason(
                 "cashflow momentum is improving"
             )
 
-        improvement_text = " and ".join(
-            improvements
-        )
-
         return (
             "Investment pressure remains active, but "
-            f"{improvement_text}."
+            + " and ".join(improvements)
+            + "."
         )
 
     if regime is CapitalCycleRegime.EXPANSION:
         return (
-            "Investment and cashflow pressure are active "
-            "without sufficient evidence of easing."
+            "Investment and cashflow pressure are clearly "
+            "active without sufficient evidence of easing."
         )
 
     return (
-        "The component states do not support a clear "
-        "expansion, transition, harvest, or "
-        "reacceleration regime."
+        "The component states remain inside neutral zones or "
+        "do not support a clear capital-cycle regime."
     )
 
 
 def classify_capital_cycle_snapshot(
     snapshot: CapitalCycleFeatureSnapshot,
     previous_signal: CapitalCycleSignal | None,
+    thresholds: CapitalCycleThresholds,
 ) -> CapitalCycleSignal:
     """Classify one capital-cycle feature snapshot."""
 
     investment_pressure = (
         PressureState.ACTIVE
         if (
-            snapshot.capex_growth_gap > ZERO
+            snapshot.capex_growth_gap
+            > thresholds.growth_gap_level
             and snapshot.capex_intensity_yoy_delta
-            > ZERO
+            > thresholds.capex_intensity_yoy_level
         )
         else PressureState.INACTIVE
     )
 
     cashflow_pressure = (
         PressureState.ACTIVE
-        if snapshot.fcf_margin_yoy_delta < ZERO
+        if (
+            snapshot.fcf_margin_yoy_delta
+            < -thresholds.fcf_margin_yoy_level
+        )
         else PressureState.INACTIVE
     )
 
     investment_momentum = (
         determine_investment_momentum(
-            snapshot
+            snapshot=snapshot,
+            thresholds=thresholds,
         )
     )
 
     cashflow_momentum = (
         determine_cashflow_momentum(
-            snapshot
+            snapshot=snapshot,
+            thresholds=thresholds,
         )
     )
 
@@ -391,11 +411,12 @@ def classify_capital_cycle_snapshot(
     )
 
     harvest_conditions = (
-        snapshot.capex_growth_gap <= ZERO
+        snapshot.capex_growth_gap
+        <= -thresholds.growth_gap_level
         and snapshot.capex_intensity_yoy_delta
-        <= ZERO
+        <= -thresholds.capex_intensity_yoy_level
         and snapshot.fcf_margin_yoy_delta
-        >= ZERO
+        >= thresholds.fcf_margin_yoy_level
         and not investment_accelerating
         and not cashflow_worsening
     )
@@ -460,8 +481,6 @@ def classify_capital_cycle_snapshot(
     classification_reason = (
         build_classification_reason(
             regime=regime,
-            investment_pressure=investment_pressure,
-            cashflow_pressure=cashflow_pressure,
             investment_momentum=investment_momentum,
             cashflow_momentum=cashflow_momentum,
             previous_regime=previous_regime,
@@ -471,6 +490,7 @@ def classify_capital_cycle_snapshot(
     return CapitalCycleSignal(
         snapshot=snapshot,
         regime=regime,
+        thresholds=thresholds,
         investment_pressure=investment_pressure,
         cashflow_pressure=cashflow_pressure,
         investment_momentum=investment_momentum,
@@ -482,8 +502,9 @@ def classify_capital_cycle_snapshot(
 
 def classify_capital_cycle_snapshots(
     snapshots: list[CapitalCycleFeatureSnapshot],
+    thresholds: CapitalCycleThresholds,
 ) -> list[CapitalCycleSignal]:
-    """Classify a chronological sequence of feature snapshots."""
+    """Classify a chronological sequence of snapshots."""
 
     ordered_snapshots = sorted(
         snapshots,
@@ -513,6 +534,7 @@ def classify_capital_cycle_snapshots(
         signal = classify_capital_cycle_snapshot(
             snapshot=snapshot,
             previous_signal=previous_signal,
+            thresholds=thresholds,
         )
 
         period_key = (

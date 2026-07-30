@@ -27,6 +27,10 @@ from quant_research.signals.capital_cycle_regime import (
     CapitalCycleSignal,
     classify_capital_cycle_snapshots,
 )
+from quant_research.signals.capital_cycle_thresholds import (
+    THRESHOLD_PROFILES,
+    CapitalCycleThresholds,
+)
 
 FEATURE_LABELS = {
     "capex_growth_gap": "Growth gap",
@@ -74,12 +78,23 @@ def format_percentage_points(
 ) -> str:
     """Format a ratio value as percentage points."""
 
-    percentage_points = (
-        value
-        * Decimal(100)
-    )
+    return f"{value * Decimal(100):.1f}"
 
-    return f"{percentage_points:.1f}"
+
+def resolve_threshold_profiles(
+    classifier: str,
+) -> list[CapitalCycleThresholds]:
+    """Resolve the requested classifier profiles."""
+
+    if classifier == "both":
+        return [
+            THRESHOLD_PROFILES["baseline"],
+            THRESHOLD_PROFILES["calibrated"],
+        ]
+
+    return [
+        THRESHOLD_PROFILES[classifier]
+    ]
 
 
 def print_signals(
@@ -87,6 +102,7 @@ def print_signals(
     signals: list[CapitalCycleSignal],
     requested_as_of: date | None,
     vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
 ) -> None:
     """Print classified capital-cycle snapshots."""
 
@@ -94,13 +110,17 @@ def print_signals(
 
     if requested_as_of is None:
         print(
-            f"{ticker} latest capital-cycle regimes"
+            f"{ticker} capital-cycle regimes"
         )
     else:
         print(
             f"{ticker} capital-cycle regimes "
             f"as of {requested_as_of}"
         )
+
+    print(
+        f"Classifier: {thresholds.name.upper()}"
+    )
 
     print(
         f"Snapshot vintage: {vintage.value.upper()}"
@@ -130,9 +150,7 @@ def print_signals(
         f"{'FCF QoQ':>10}"
     )
 
-    print(
-        "-" * 116
-    )
+    print("-" * 116)
 
     for signal in signals:
         snapshot = signal.snapshot
@@ -157,14 +175,18 @@ def print_signals(
 
 def print_signal_details(
     signals: list[CapitalCycleSignal],
+    thresholds: CapitalCycleThresholds,
 ) -> None:
-    """Print component states and classification explanations."""
+    """Print component states and explanations."""
 
     if not signals:
         return
 
     print()
-    print("Component diagnostics")
+    print(
+        "Component diagnostics "
+        f"({thresholds.name.upper()})"
+    )
     print("-" * 88)
 
     for signal in signals:
@@ -205,12 +227,18 @@ def print_signal_details(
 def print_diagnostics(
     diagnostics: CapitalCycleDiagnostics,
     vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
 ) -> None:
     """Print historical regime and feature diagnostics."""
 
     print()
     print("Historical calibration diagnostics")
     print("-" * 72)
+
+    print(
+        f"Classifier: {thresholds.name.upper()}"
+    )
+
     print(
         f"Snapshot vintage: {vintage.value.upper()}"
     )
@@ -402,6 +430,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--diagnostics-only",
+        action="store_true",
+        help=(
+            "Only show historical calibration diagnostics."
+        ),
+    )
+
+    parser.add_argument(
         "--vintage",
         choices=tuple(
             vintage.value
@@ -409,10 +445,22 @@ def parse_args() -> argparse.Namespace:
         ),
         default=SnapshotVintage.LATEST.value,
         help=(
-            "Snapshot version selected per fiscal period: "
-            "'latest' for the newest known version or "
-            "'first' for the first complete version. "
+            "Snapshot version selected per fiscal period. "
             "Default: latest."
+        ),
+    )
+
+    parser.add_argument(
+        "--classifier",
+        choices=(
+            "baseline",
+            "calibrated",
+            "both",
+        ),
+        default="both",
+        help=(
+            "Classifier profile to run. "
+            "Default: both."
         ),
     )
 
@@ -426,6 +474,12 @@ def main() -> None:
 
     vintage = SnapshotVintage(
         args.vintage
+    )
+
+    threshold_profiles = (
+        resolve_threshold_profiles(
+            args.classifier
+        )
     )
 
     engine = create_database_engine()
@@ -461,8 +515,6 @@ def main() -> None:
             )
         )
 
-        # Keep all historical periods available for classification.
-        # Reacceleration depends on the immediately preceding period.
         selected_per_period = (
             select_snapshot_per_period(
                 snapshots=snapshots,
@@ -472,39 +524,46 @@ def main() -> None:
             )
         )
 
+    for thresholds in threshold_profiles:
         signals = classify_capital_cycle_snapshots(
-            snapshots=selected_per_period
+            snapshots=selected_per_period,
+            thresholds=thresholds,
         )
 
         selected_signals = signals[
             -args.latest:
         ]
 
-        # Diagnostics use the full classified history rather than
-        # only the periods selected through --latest.
         diagnostics = (
             build_capital_cycle_diagnostics(
                 signals=signals
             )
         )
 
-    print_signals(
-        ticker=ticker,
-        signals=selected_signals,
-        requested_as_of=args.as_of,
-        vintage=vintage,
-    )
+        if not args.diagnostics_only:
+            print_signals(
+                ticker=ticker,
+                signals=selected_signals,
+                requested_as_of=args.as_of,
+                vintage=vintage,
+                thresholds=thresholds,
+            )
 
-    if args.details:
-        print_signal_details(
-            signals=selected_signals
-        )
+            if args.details:
+                print_signal_details(
+                    signals=selected_signals,
+                    thresholds=thresholds,
+                )
 
-    if args.diagnostics:
-        print_diagnostics(
-            diagnostics=diagnostics,
-            vintage=vintage,
-        )
+        if (
+            args.diagnostics
+            or args.diagnostics_only
+        ):
+            print_diagnostics(
+                diagnostics=diagnostics,
+                vintage=vintage,
+                thresholds=thresholds,
+            )
 
 
 if __name__ == "__main__":
