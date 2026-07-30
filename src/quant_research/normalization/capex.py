@@ -9,7 +9,11 @@ from quant_research.normalization.flow import (
 CAPEX_CONFIG = FlowMetricConfig(
     metric="capex",
     concept_priority={
+        # Preferred standard US-GAAP concept.
         "PaymentsToAcquirePropertyPlantAndEquipment": 0,
+
+        # Used by Amazon for current gross cash CAPEX.
+        "PaymentsToAcquireProductiveAssets": 1,
     },
 )
 
@@ -18,7 +22,7 @@ def normalize_capex(
     session: Session,
     company: Company,
 ) -> tuple[int, int]:
-    """Normalize quarterly capital expenditures."""
+    """Normalize quarterly gross cash capital expenditures."""
 
     return normalize_cumulative_ytd_metric(
         session=session,
