@@ -13,10 +13,13 @@ from quant_research.normalization.fiscal_period_resolver import (
     FiscalPeriodResolver,
 )
 from quant_research.signals.capital_cycle_features import (
-    CapitalCycleFeatureSnapshot,
     build_capital_cycle_feature_snapshots,
     load_capital_cycle_feature_observations,
     select_latest_snapshot_per_period,
+)
+from quant_research.signals.capital_cycle_regime import (
+    CapitalCycleSignal,
+    classify_capital_cycle_snapshots,
 )
 
 
@@ -62,22 +65,22 @@ def format_percentage_points(
     return f"{percentage_points:.1f}"
 
 
-def print_snapshots(
+def print_signals(
     ticker: str,
-    snapshots: list[CapitalCycleFeatureSnapshot],
+    signals: list[CapitalCycleSignal],
     requested_as_of: date | None,
 ) -> None:
-    """Print capital-cycle snapshots as a compact table."""
+    """Print classified capital-cycle snapshots."""
 
     print()
 
     if requested_as_of is None:
         print(
-            f"{ticker} latest capital-cycle feature snapshots"
+            f"{ticker} latest capital-cycle regimes"
         )
     else:
         print(
-            f"{ticker} capital-cycle feature snapshots "
+            f"{ticker} capital-cycle regimes "
             f"as of {requested_as_of}"
         )
 
@@ -85,29 +88,33 @@ def print_snapshots(
         "All feature values are percentage points."
     )
 
-    if not snapshots:
+    if not signals:
         print(
-            "No complete feature snapshots are available."
+            "No complete capital-cycle signals are available."
         )
         return
 
     print()
+
     print(
         f"{'Fiscal period':<14}"
         f"{'As of':<12}"
-        f"{'Gap':>9}"
-        f"{'Intensity YoY':>16}"
-        f"{'FCF margin YoY':>17}"
-        f"{'Gap QoQ':>11}"
-        f"{'Intensity QoQ':>16}"
-        f"{'FCF QoQ':>11}"
+        f"{'Regime':<16}"
+        f"{'Gap':>8}"
+        f"{'Intensity YoY':>15}"
+        f"{'FCF margin YoY':>16}"
+        f"{'Gap QoQ':>10}"
+        f"{'Intensity QoQ':>15}"
+        f"{'FCF QoQ':>10}"
     )
 
     print(
-        "-" * 106
+        "-" * 116
     )
 
-    for snapshot in snapshots:
+    for signal in signals:
+        snapshot = signal.snapshot
+
         fiscal_period = (
             f"FY{snapshot.fiscal_year} "
             f"Q{snapshot.fiscal_quarter}"
@@ -116,12 +123,13 @@ def print_snapshots(
         print(
             f"{fiscal_period:<14}"
             f"{snapshot.as_of.isoformat():<12}"
-            f"{format_percentage_points(snapshot.capex_growth_gap):>9}"
-            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta):>16}"
-            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta):>17}"
-            f"{format_percentage_points(snapshot.capex_growth_gap_qoq_delta):>11}"
-            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta_qoq_delta):>16}"
-            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta_qoq_delta):>11}"
+            f"{signal.regime.value:<16}"
+            f"{format_percentage_points(snapshot.capex_growth_gap):>8}"
+            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta):>15}"
+            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta):>16}"
+            f"{format_percentage_points(snapshot.capex_growth_gap_qoq_delta):>10}"
+            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta_qoq_delta):>15}"
+            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta_qoq_delta):>10}"
         )
 
 
@@ -130,7 +138,7 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Build point-in-time capital-cycle feature snapshots."
+            "Build point-in-time capital-cycle regimes."
         )
     )
 
@@ -200,17 +208,28 @@ def main() -> None:
             )
         )
 
-        selected = (
+        # Select all historical periods before classifying.
+        # Reacceleration depends on the immediately preceding
+        # fiscal period, including periods outside --latest.
+        latest_per_period = (
             select_latest_snapshot_per_period(
                 snapshots=snapshots,
                 as_of=args.as_of,
-                limit=args.latest,
+                limit=None,
             )
         )
 
-    print_snapshots(
+        signals = classify_capital_cycle_snapshots(
+            snapshots=latest_per_period
+        )
+
+        selected_signals = signals[
+            -args.latest:
+        ]
+
+    print_signals(
         ticker=ticker,
-        snapshots=selected,
+        signals=selected_signals,
         requested_as_of=args.as_of,
     )
 
