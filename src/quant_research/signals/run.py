@@ -17,9 +17,10 @@ from quant_research.signals.capital_cycle_diagnostics import (
     build_capital_cycle_diagnostics,
 )
 from quant_research.signals.capital_cycle_features import (
+    SnapshotVintage,
     build_capital_cycle_feature_snapshots,
     load_capital_cycle_feature_observations,
-    select_latest_snapshot_per_period,
+    select_snapshot_per_period,
 )
 from quant_research.signals.capital_cycle_regime import (
     CapitalCycleRegime,
@@ -85,6 +86,7 @@ def print_signals(
     ticker: str,
     signals: list[CapitalCycleSignal],
     requested_as_of: date | None,
+    vintage: SnapshotVintage,
 ) -> None:
     """Print classified capital-cycle snapshots."""
 
@@ -99,6 +101,10 @@ def print_signals(
             f"{ticker} capital-cycle regimes "
             f"as of {requested_as_of}"
         )
+
+    print(
+        f"Snapshot vintage: {vintage.value.upper()}"
+    )
 
     print(
         "All feature values are percentage points."
@@ -198,12 +204,16 @@ def print_signal_details(
 
 def print_diagnostics(
     diagnostics: CapitalCycleDiagnostics,
+    vintage: SnapshotVintage,
 ) -> None:
     """Print historical regime and feature diagnostics."""
 
     print()
     print("Historical calibration diagnostics")
     print("-" * 72)
+    print(
+        f"Snapshot vintage: {vintage.value.upper()}"
+    )
 
     if diagnostics.total_periods == 0:
         print(
@@ -391,6 +401,21 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    parser.add_argument(
+        "--vintage",
+        choices=tuple(
+            vintage.value
+            for vintage in SnapshotVintage
+        ),
+        default=SnapshotVintage.LATEST.value,
+        help=(
+            "Snapshot version selected per fiscal period: "
+            "'latest' for the newest known version or "
+            "'first' for the first complete version. "
+            "Default: latest."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -398,6 +423,10 @@ def main() -> None:
     args = parse_args()
 
     ticker = args.ticker.upper()
+
+    vintage = SnapshotVintage(
+        args.vintage
+    )
 
     engine = create_database_engine()
 
@@ -434,16 +463,17 @@ def main() -> None:
 
         # Keep all historical periods available for classification.
         # Reacceleration depends on the immediately preceding period.
-        latest_per_period = (
-            select_latest_snapshot_per_period(
+        selected_per_period = (
+            select_snapshot_per_period(
                 snapshots=snapshots,
+                vintage=vintage,
                 as_of=args.as_of,
                 limit=None,
             )
         )
 
         signals = classify_capital_cycle_snapshots(
-            snapshots=latest_per_period
+            snapshots=selected_per_period
         )
 
         selected_signals = signals[
@@ -462,6 +492,7 @@ def main() -> None:
         ticker=ticker,
         signals=selected_signals,
         requested_as_of=args.as_of,
+        vintage=vintage,
     )
 
     if args.details:
@@ -471,7 +502,8 @@ def main() -> None:
 
     if args.diagnostics:
         print_diagnostics(
-            diagnostics=diagnostics
+            diagnostics=diagnostics,
+            vintage=vintage,
         )
 
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import Enum
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,6 +19,12 @@ CAPITAL_CYCLE_FEATURE_METRICS = (
     "capex_intensity_yoy_delta_qoq_delta",
     "fcf_margin_yoy_delta_qoq_delta",
 )
+
+class SnapshotVintage(str, Enum):
+    """Which point-in-time version to select per fiscal period."""
+
+    FIRST = "first"
+    LATEST = "latest"
 
 
 @dataclass(frozen=True)
@@ -314,14 +321,15 @@ def build_capital_cycle_feature_snapshots(
     return snapshots
 
 
-def select_latest_snapshot_per_period(
+def select_snapshot_per_period(
     snapshots: list[CapitalCycleFeatureSnapshot],
+    vintage: SnapshotVintage,
     as_of: date | None = None,
     limit: int | None = None,
 ) -> list[CapitalCycleFeatureSnapshot]:
-    """Select the latest complete snapshot for each fiscal period."""
+    """Select one point-in-time snapshot for each fiscal period."""
 
-    latest_by_period: dict[
+    selected_by_period: dict[
         tuple[int, int],
         CapitalCycleFeatureSnapshot,
     ] = {}
@@ -338,25 +346,43 @@ def select_latest_snapshot_per_period(
             snapshot.fiscal_quarter,
         )
 
-        existing = latest_by_period.get(
+        existing = selected_by_period.get(
             period_key
         )
 
-        if (
-            existing is None
-            or snapshot.as_of > existing.as_of
-            or (
-                snapshot.as_of == existing.as_of
-                and snapshot.source_state
-                > existing.source_state
+        if existing is None:
+            selected_by_period[
+                period_key
+            ] = snapshot
+            continue
+
+        if vintage is SnapshotVintage.FIRST:
+            should_replace = (
+                snapshot.as_of < existing.as_of
+                or (
+                    snapshot.as_of == existing.as_of
+                    and snapshot.source_state
+                    < existing.source_state
+                )
             )
-        ):
-            latest_by_period[
+
+        else:
+            should_replace = (
+                snapshot.as_of > existing.as_of
+                or (
+                    snapshot.as_of == existing.as_of
+                    and snapshot.source_state
+                    > existing.source_state
+                )
+            )
+
+        if should_replace:
+            selected_by_period[
                 period_key
             ] = snapshot
 
     selected = sorted(
-        latest_by_period.values(),
+        selected_by_period.values(),
         key=lambda snapshot: (
             snapshot.fiscal_year,
             snapshot.fiscal_quarter,
@@ -367,3 +393,33 @@ def select_latest_snapshot_per_period(
         selected = selected[-limit:]
 
     return selected
+
+
+def select_latest_snapshot_per_period(
+    snapshots: list[CapitalCycleFeatureSnapshot],
+    as_of: date | None = None,
+    limit: int | None = None,
+) -> list[CapitalCycleFeatureSnapshot]:
+    """Select the latest available snapshot per fiscal period."""
+
+    return select_snapshot_per_period(
+        snapshots=snapshots,
+        vintage=SnapshotVintage.LATEST,
+        as_of=as_of,
+        limit=limit,
+    )
+
+
+def select_first_snapshot_per_period(
+    snapshots: list[CapitalCycleFeatureSnapshot],
+    as_of: date | None = None,
+    limit: int | None = None,
+) -> list[CapitalCycleFeatureSnapshot]:
+    """Select the first complete snapshot per fiscal period."""
+
+    return select_snapshot_per_period(
+        snapshots=snapshots,
+        vintage=SnapshotVintage.FIRST,
+        as_of=as_of,
+        limit=limit,
+    )
