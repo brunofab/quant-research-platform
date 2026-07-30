@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -47,6 +48,145 @@ FEATURE_LABELS = {
     "fcf_margin_yoy_delta_qoq_delta": "FCF QoQ",
 }
 
+
+
+@dataclass(frozen=True)
+class CompanySignalSeries:
+    """Raw and confirmed signal histories for one company."""
+
+    ticker: str
+    raw_signals: list[CapitalCycleSignal]
+    confirmed_signals: list[ConfirmedCapitalCycleSignal]
+
+
+def deduplicate_tickers(
+    tickers: list[str],
+) -> list[str]:
+    """Normalize tickers while preserving their requested order."""
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for ticker in tickers:
+        canonical = ticker.upper()
+
+        if canonical in seen:
+            continue
+
+        seen.add(canonical)
+        normalized.append(canonical)
+
+    return normalized
+
+
+def resolve_requested_tickers(
+    session: Session,
+    args: argparse.Namespace,
+) -> list[str]:
+    """Resolve the company universe requested through the CLI."""
+
+    if args.ticker is not None:
+        return [args.ticker.upper()]
+
+    if args.tickers is not None:
+        return deduplicate_tickers(args.tickers)
+
+    if args.all_companies:
+        tickers = list(
+            session.scalars(
+                select(Company.ticker).order_by(
+                    Company.ticker
+                )
+            )
+        )
+
+        if not tickers:
+            raise ValueError(
+                "No companies exist in the database."
+            )
+
+        return tickers
+
+    raise ValueError(
+        "No company selection was supplied."
+    )
+
+
+def load_company(
+    session: Session,
+    ticker: str,
+) -> Company:
+    """Load one company by ticker."""
+
+    company = session.scalar(
+        select(Company).where(
+            Company.ticker == ticker
+        )
+    )
+
+    if company is None:
+        raise ValueError(
+            f"{ticker} does not exist in companies."
+        )
+
+    return company
+
+
+def build_company_signal_series(
+    session: Session,
+    company: Company,
+    vintage: SnapshotVintage,
+    as_of: date | None,
+    thresholds: CapitalCycleThresholds,
+    confirmation_hits: int,
+    confirmation_window: int,
+) -> CompanySignalSeries:
+    """Build raw and confirmed signals for one company."""
+
+    resolver = FiscalPeriodResolver(
+        session=session,
+        company_id=company.id,
+    )
+
+    observations = (
+        load_capital_cycle_feature_observations(
+            session=session,
+            company_id=company.id,
+        )
+    )
+
+    snapshots = (
+        build_capital_cycle_feature_snapshots(
+            observations=observations,
+            resolver=resolver,
+        )
+    )
+
+    selected_per_period = (
+        select_snapshot_per_period(
+            snapshots=snapshots,
+            vintage=vintage,
+            as_of=as_of,
+            limit=None,
+        )
+    )
+
+    raw_signals = classify_capital_cycle_snapshots(
+        snapshots=selected_per_period,
+        thresholds=thresholds,
+    )
+
+    confirmed_signals = confirm_capital_cycle_signals(
+        raw_signals=raw_signals,
+        confirmation_required=confirmation_hits,
+        confirmation_window=confirmation_window,
+    )
+
+    return CompanySignalSeries(
+        ticker=company.ticker,
+        raw_signals=raw_signals,
+        confirmed_signals=confirmed_signals,
+    )
 
 def parse_iso_date(value: str) -> date:
     """Parse an ISO date supplied through the command line."""
@@ -537,6 +677,113 @@ def print_confirmation_comparison(
         )
 
 
+
+def print_universe_overview(
+    series: list[CompanySignalSeries],
+    requested_as_of: date | None,
+    vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
+) -> None:
+    """Print the latest dashboard-style signal for each company."""
+
+    print()
+
+    if requested_as_of is None:
+        print("Capital-cycle universe overview")
+    else:
+        print(
+            "Capital-cycle universe overview "
+            f"as of {requested_as_of}"
+        )
+
+    print(
+        f"Classifier: {thresholds.name.upper()}"
+    )
+
+    print(
+        f"Snapshot vintage: {vintage.value.upper()}"
+    )
+
+    print(
+        "All feature values are percentage points."
+    )
+
+    print()
+
+    print(
+        f"{'Ticker':<8}"
+        f"{'Fiscal':<10}"
+        f"{'As of':<12}"
+        f"{'Confirmed':<16}"
+        f"{'Raw':<16}"
+        f"{'Candidate':<16}"
+        f"{'Progress':>10}"
+        f"{'Gap':>8}"
+        f"{'Int YoY':>10}"
+        f"{'FCF YoY':>10}"
+        f"{'Gap QoQ':>10}"
+        f"{'Int QoQ':>10}"
+        f"{'FCF QoQ':>10}"
+    )
+
+    print("-" * 146)
+
+    for company_series in series:
+        if not company_series.confirmed_signals:
+            print(
+                f"{company_series.ticker:<8}"
+                f"{'-':<10}"
+                f"{'-':<12}"
+                f"{'NO DATA':<16}"
+                f"{'-':<16}"
+                f"{'-':<16}"
+                f"{'-':>10}"
+                f"{'-':>8}"
+                f"{'-':>10}"
+                f"{'-':>10}"
+                f"{'-':>10}"
+                f"{'-':>10}"
+                f"{'-':>10}"
+            )
+            continue
+
+        signal = company_series.confirmed_signals[-1]
+        snapshot = signal.snapshot
+
+        fiscal_period = (
+            f"FY{snapshot.fiscal_year}"
+            f"Q{snapshot.fiscal_quarter}"
+        )
+
+        candidate = (
+            signal.candidate_regime.value
+            if signal.candidate_regime is not None
+            else "-"
+        )
+
+        progress = (
+            f"{signal.candidate_hits}/"
+            f"{signal.confirmation_required}"
+            if signal.confirmation_pending
+            else "-"
+        )
+
+        print(
+            f"{company_series.ticker:<8}"
+            f"{fiscal_period:<10}"
+            f"{snapshot.as_of.isoformat():<12}"
+            f"{signal.regime.value:<16}"
+            f"{signal.raw_regime.value:<16}"
+            f"{candidate:<16}"
+            f"{progress:>10}"
+            f"{format_percentage_points(snapshot.capex_growth_gap):>8}"
+            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta):>10}"
+            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta):>10}"
+            f"{format_percentage_points(snapshot.capex_growth_gap_qoq_delta):>10}"
+            f"{format_percentage_points(snapshot.capex_intensity_yoy_delta_qoq_delta):>10}"
+            f"{format_percentage_points(snapshot.fcf_margin_yoy_delta_qoq_delta):>10}"
+        )
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
@@ -546,10 +793,38 @@ def parse_args() -> argparse.Namespace:
         )
     )
 
-    parser.add_argument(
+    target_group = parser.add_mutually_exclusive_group(
+        required=True
+    )
+
+    target_group.add_argument(
         "--ticker",
-        required=True,
-        help="Company ticker, for example GOOGL or MSFT.",
+        help="Single company ticker, for example GOOGL.",
+    )
+
+    target_group.add_argument(
+        "--tickers",
+        nargs="+",
+        help=(
+            "Multiple company tickers, for example "
+            "GOOGL MSFT META AMZN."
+        ),
+    )
+
+    target_group.add_argument(
+        "--all-companies",
+        action="store_true",
+        help=(
+            "Run all companies currently stored in the database."
+        ),
+    )
+
+    parser.add_argument(
+        "--overview",
+        action="store_true",
+        help=(
+            "Show one latest dashboard-style row per company."
+        ),
     )
 
     parser.add_argument(
@@ -557,8 +832,8 @@ def parse_args() -> argparse.Namespace:
         type=positive_integer,
         default=8,
         help=(
-            "Number of latest fiscal periods to show. "
-            "Default: 8."
+            "Number of latest fiscal periods to show in "
+            "detail mode. Default: 8."
         ),
     )
 
@@ -617,8 +892,7 @@ def parse_args() -> argparse.Namespace:
         ),
         default="both",
         help=(
-            "Classifier profile to run. "
-            "Default: both."
+            "Classifier profile to run. Default: both."
         ),
     )
 
@@ -653,17 +927,118 @@ def parse_args() -> argparse.Namespace:
         ),
         default="both",
         help=(
-            "Regime output to show. Default: both."
+            "Regime output to show in detail mode. Default: both."
         ),
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
+    if args.confirmation_hits > args.confirmation_window:
+        parser.error(
+            "--confirmation-hits cannot exceed "
+            "--confirmation-window."
+        )
+
+    if args.overview and (
+        args.details
+        or args.diagnostics
+        or args.diagnostics_only
+    ):
+        parser.error(
+            "--overview cannot be combined with "
+            "--details, --diagnostics, or "
+            "--diagnostics-only."
+        )
+
+    return args
+
+
+def print_company_detail(
+    series: CompanySignalSeries,
+    args: argparse.Namespace,
+    vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
+) -> None:
+    """Print the existing detailed output for one company."""
+
+    selected_raw_signals = series.raw_signals[
+        -args.latest:
+    ]
+
+    selected_confirmed_signals = (
+        series.confirmed_signals[
+            -args.latest:
+        ]
+    )
+
+    raw_diagnostics = (
+        build_capital_cycle_diagnostics(
+            signals=series.raw_signals
+        )
+    )
+
+    confirmed_diagnostics = (
+        build_capital_cycle_diagnostics(
+            signals=series.confirmed_signals
+        )
+    )
+
+    if not args.diagnostics_only:
+        if args.regime_view in {
+            "raw",
+            "both",
+        }:
+            print_signals(
+                ticker=series.ticker,
+                signals=selected_raw_signals,
+                requested_as_of=args.as_of,
+                vintage=vintage,
+                thresholds=thresholds,
+            )
+
+        if args.details:
+            print_signal_details(
+                signals=selected_raw_signals,
+                thresholds=thresholds,
+            )
+
+        if args.regime_view in {
+            "confirmed",
+            "both",
+        }:
+            print_confirmed_signals(
+                ticker=series.ticker,
+                signals=selected_confirmed_signals,
+                requested_as_of=args.as_of,
+                vintage=vintage,
+                thresholds=thresholds,
+            )
+
+    if args.diagnostics:
+        print_diagnostics(
+            diagnostics=raw_diagnostics,
+            vintage=vintage,
+            thresholds=thresholds,
+        )
+
+    if args.diagnostics or args.diagnostics_only:
+        print_confirmation_comparison(
+            raw_diagnostics=raw_diagnostics,
+            confirmed_diagnostics=(
+                confirmed_diagnostics
+            ),
+            vintage=vintage,
+            thresholds=thresholds,
+            confirmation_required=(
+                args.confirmation_hits
+            ),
+            confirmation_window=(
+                args.confirmation_window
+            ),
+        )
 
 def main() -> None:
     args = parse_args()
-
-    ticker = args.ticker.upper()
 
     vintage = SnapshotVintage(
         args.vintage
@@ -678,141 +1053,53 @@ def main() -> None:
     engine = create_database_engine()
 
     with Session(engine) as session:
-        company = session.scalar(
-            select(Company).where(
-                Company.ticker == ticker
-            )
-        )
-
-        if company is None:
-            raise ValueError(
-                f"{ticker} does not exist in companies."
-            )
-
-        resolver = FiscalPeriodResolver(
+        tickers = resolve_requested_tickers(
             session=session,
-            company_id=company.id,
+            args=args,
         )
 
-        observations = (
-            load_capital_cycle_feature_observations(
+        companies = [
+            load_company(
                 session=session,
-                company_id=company.id,
+                ticker=ticker,
             )
-        )
-
-        snapshots = (
-            build_capital_cycle_feature_snapshots(
-                observations=observations,
-                resolver=resolver,
-            )
-        )
-
-        selected_per_period = (
-            select_snapshot_per_period(
-                snapshots=snapshots,
-                vintage=vintage,
-                as_of=args.as_of,
-                limit=None,
-            )
-        )
-
-    for thresholds in threshold_profiles:
-        raw_signals = classify_capital_cycle_snapshots(
-            snapshots=selected_per_period,
-            thresholds=thresholds,
-        )
-
-        confirmed_signals = confirm_capital_cycle_signals(
-            raw_signals=raw_signals,
-            confirmation_required=(
-                args.confirmation_hits
-            ),
-            confirmation_window=(
-                args.confirmation_window
-            ),
-        )
-
-        selected_raw_signals = raw_signals[
-            -args.latest:
+            for ticker in tickers
         ]
 
-        selected_confirmed_signals = (
-            confirmed_signals[
-                -args.latest:
-            ]
-        )
-
-        raw_diagnostics = (
-            build_capital_cycle_diagnostics(
-                signals=raw_signals
-            )
-        )
-
-        confirmed_diagnostics = (
-            build_capital_cycle_diagnostics(
-                signals=confirmed_signals
-            )
-        )
-
-        if not args.diagnostics_only:
-            if args.regime_view in {
-                "raw",
-                "both",
-            }:
-                print_signals(
-                    ticker=ticker,
-                    signals=selected_raw_signals,
-                    requested_as_of=args.as_of,
+        for thresholds in threshold_profiles:
+            company_series = [
+                build_company_signal_series(
+                    session=session,
+                    company=company,
                     vintage=vintage,
+                    as_of=args.as_of,
                     thresholds=thresholds,
-                )
-
-            if args.details:
-                print_signal_details(
-                    signals=selected_raw_signals,
-                    thresholds=thresholds,
-                )
-
-            if args.regime_view in {
-                "confirmed",
-                "both",
-            }:
-                print_confirmed_signals(
-                    ticker=ticker,
-                    signals=(
-                        selected_confirmed_signals
+                    confirmation_hits=(
+                        args.confirmation_hits
                     ),
+                    confirmation_window=(
+                        args.confirmation_window
+                    ),
+                )
+                for company in companies
+            ]
+
+            if args.overview:
+                print_universe_overview(
+                    series=company_series,
                     requested_as_of=args.as_of,
                     vintage=vintage,
                     thresholds=thresholds,
                 )
+                continue
 
-        if args.diagnostics:
-            print_diagnostics(
-                diagnostics=raw_diagnostics,
-                vintage=vintage,
-                thresholds=thresholds,
-            )
-
-        if (
-            args.diagnostics
-            or args.diagnostics_only
-        ):
-            print_confirmation_comparison(
-                raw_diagnostics=raw_diagnostics,
-                confirmed_diagnostics=(
-                    confirmed_diagnostics
-                ),
-                vintage=vintage,
-                thresholds=thresholds,
-                confirmation_required=(
-                    args.confirmation_hits
-                ),
-                confirmation_window=(
-                    args.confirmation_window
-                ),
-            )
+            for series in company_series:
+                print_company_detail(
+                    series=series,
+                    args=args,
+                    vintage=vintage,
+                    thresholds=thresholds,
+                )
 
 
 if __name__ == "__main__":
