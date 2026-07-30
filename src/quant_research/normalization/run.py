@@ -15,6 +15,10 @@ from quant_research.normalization.fiscal_calendar import (
     backfill_historical_fiscal_periods,
     sync_fiscal_periods,
 )
+from quant_research.normalization.growth import (
+    normalize_capex_yoy,
+    normalize_revenue_yoy,
+)
 from quant_research.normalization.ratios import (
     normalize_capex_intensity,
     normalize_fcf_margin,
@@ -36,6 +40,8 @@ NORMALIZERS: dict[str, Normalizer] = {
     "fcf": normalize_fcf,
     "capex_intensity": normalize_capex_intensity,
     "fcf_margin": normalize_fcf_margin,
+    "revenue_yoy": normalize_revenue_yoy,
+    "capex_yoy": normalize_capex_yoy,
 }
 
 
@@ -58,6 +64,12 @@ METRIC_DEPENDENCIES: dict[
         "fcf",
         "revenue",
     ),
+    "revenue_yoy": (
+        "revenue",
+    ),
+    "capex_yoy": (
+        "capex",
+    ),
 }
 
 
@@ -68,6 +80,8 @@ NORMALIZATION_ORDER = (
     "fcf",
     "capex_intensity",
     "fcf_margin",
+    "revenue_yoy",
+    "capex_yoy",
 )
 
 
