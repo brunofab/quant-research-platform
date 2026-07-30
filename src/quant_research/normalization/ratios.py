@@ -15,6 +15,9 @@ from quant_research.normalization.derived import (
     DerivedSource,
     store_derived_observation,
 )
+from quant_research.normalization.fiscal_period_resolver import (
+    FiscalPeriodResolver,
+)
 
 RATIO_QUANTUM = Decimal("0.000001")
 
@@ -133,6 +136,7 @@ def build_ratio_observations(
     numerator_observations: list[NormalizedFinancial],
     denominator_observations: list[NormalizedFinancial],
     config: RatioMetricConfig,
+    resolver: FiscalPeriodResolver,
 ) -> list[DerivedObservation]:
     """Build point-in-time versions of one financial ratio."""
 
@@ -154,12 +158,17 @@ def build_ratio_observations(
     for fiscal_year, fiscal_quarter in sorted(
         common_periods
     ):
+        period_key = (
+            fiscal_year,
+            fiscal_quarter,
+        )
+
         numerator_versions = numerator_by_period[
-            (fiscal_year, fiscal_quarter)
+            period_key
         ]
 
         denominator_versions = denominator_by_period[
-            (fiscal_year, fiscal_quarter)
+            period_key
         ]
 
         event_dates = sorted(
@@ -196,17 +205,35 @@ def build_ratio_observations(
                     f"{numerator.unit} and {denominator.unit}."
                 )
 
-            if numerator.period_start != denominator.period_start:
-                raise ValueError(
-                    "Ratio inputs have different period_start values for "
-                    f"{config.metric}, FY{fiscal_year} "
-                    f"Q{fiscal_quarter}."
-                )
-
             if numerator.period_end != denominator.period_end:
                 raise ValueError(
                     "Ratio inputs have different period_end values for "
                     f"{config.metric}, FY{fiscal_year} "
+                    f"Q{fiscal_quarter}: "
+                    f"{numerator.period_end} and "
+                    f"{denominator.period_end}."
+                )
+
+            fiscal_period = resolver.try_resolve_by_end(
+                numerator.period_end
+            )
+
+            if fiscal_period is None:
+                raise ValueError(
+                    "Unable to resolve the canonical fiscal period for "
+                    f"{config.metric}, FY{fiscal_year} "
+                    f"Q{fiscal_quarter}, "
+                    f"period_end={numerator.period_end}."
+                )
+
+            if (
+                fiscal_period.fiscal_year != fiscal_year
+                or fiscal_period.fiscal_quarter
+                != fiscal_quarter
+            ):
+                raise ValueError(
+                    "Resolved fiscal period does not match the ratio "
+                    f"group for {config.metric}, FY{fiscal_year} "
                     f"Q{fiscal_quarter}."
                 )
 
@@ -214,7 +241,8 @@ def build_ratio_observations(
                 raise ValueError(
                     "Cannot divide by zero for "
                     f"{config.metric}, FY{fiscal_year} "
-                    f"Q{fiscal_quarter}, available_at={event_date}."
+                    f"Q{fiscal_quarter}, "
+                    f"available_at={event_date}."
                 )
 
             source_pair = (
@@ -243,8 +271,8 @@ def build_ratio_observations(
                     unit="ratio",
                     fiscal_year=fiscal_year,
                     fiscal_quarter=fiscal_quarter,
-                    period_start=numerator.period_start,
-                    period_end=numerator.period_end,
+                    period_start=fiscal_period.period_start,
+                    period_end=fiscal_period.period_end,
                     available_at=max(
                         numerator.available_at,
                         denominator.available_at,
@@ -275,6 +303,11 @@ def normalize_ratio_metric(
 ) -> tuple[int, int]:
     """Normalize one point-in-time financial ratio."""
 
+    resolver = FiscalPeriodResolver(
+        session=session,
+        company_id=company.id,
+    )
+
     numerator_observations = load_metric_observations(
         session=session,
         company_id=company.id,
@@ -291,6 +324,7 @@ def normalize_ratio_metric(
         numerator_observations=numerator_observations,
         denominator_observations=denominator_observations,
         config=config,
+        resolver=resolver,
     )
 
     inserted = 0
