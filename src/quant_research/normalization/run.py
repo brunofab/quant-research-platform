@@ -22,6 +22,11 @@ from quant_research.normalization.growth import (
 from quant_research.normalization.growth_gap import (
     normalize_capex_growth_gap,
 )
+from quant_research.normalization.momentum import (
+    normalize_capex_growth_gap_qoq_delta,
+    normalize_capex_intensity_yoy_delta_qoq_delta,
+    normalize_fcf_margin_yoy_delta_qoq_delta,
+)
 from quant_research.normalization.ratio_deltas import (
     normalize_capex_intensity_yoy_delta,
     normalize_fcf_margin_yoy_delta,
@@ -54,6 +59,15 @@ NORMALIZERS: dict[str, Normalizer] = {
         normalize_capex_intensity_yoy_delta
     ),
     "fcf_margin_yoy_delta": normalize_fcf_margin_yoy_delta,
+    "capex_growth_gap_qoq_delta": (
+    normalize_capex_growth_gap_qoq_delta
+    ),
+    "capex_intensity_yoy_delta_qoq_delta": (
+        normalize_capex_intensity_yoy_delta_qoq_delta
+    ),
+    "fcf_margin_yoy_delta_qoq_delta": (
+        normalize_fcf_margin_yoy_delta_qoq_delta
+    ),
 }
 
 
@@ -92,6 +106,15 @@ METRIC_DEPENDENCIES: dict[
     "fcf_margin_yoy_delta": (
         "fcf_margin",
     ),
+    "capex_growth_gap_qoq_delta": (
+    "capex_growth_gap",
+    ),
+    "capex_intensity_yoy_delta_qoq_delta": (
+        "capex_intensity_yoy_delta",
+    ),
+    "fcf_margin_yoy_delta_qoq_delta": (
+        "fcf_margin_yoy_delta",
+    ),
 }   
 
 
@@ -107,6 +130,9 @@ NORMALIZATION_ORDER = (
     "capex_growth_gap",
     "capex_intensity_yoy_delta",
     "fcf_margin_yoy_delta",
+    "capex_growth_gap_qoq_delta",
+    "capex_intensity_yoy_delta_qoq_delta",
+    "fcf_margin_yoy_delta_qoq_delta",
 )
 
 
