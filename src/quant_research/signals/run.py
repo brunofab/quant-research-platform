@@ -447,7 +447,7 @@ def print_confirmed_signals(
         )
 
         progress = (
-            f"{signal.candidate_age_quarters}/"
+            f"{signal.candidate_hits}/"
             f"{signal.confirmation_required}"
             if signal.confirmation_pending
             else "-"
@@ -475,6 +475,7 @@ def print_confirmation_comparison(
     vintage: SnapshotVintage,
     thresholds: CapitalCycleThresholds,
     confirmation_required: int,
+    confirmation_window: int,
 ) -> None:
     """Compare raw and stabilized regime diagnostics."""
 
@@ -491,8 +492,9 @@ def print_confirmation_comparison(
     )
 
     print(
-        "Confirmation required: "
-        f"{confirmation_required} consecutive quarters"
+        "Confirmation rule: "
+        f"{confirmation_required} hits within a rolling "
+        f"{confirmation_window}-quarter window"
     )
 
     print()
@@ -621,12 +623,24 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--confirmation-hits",
         "--confirmation-quarters",
+        dest="confirmation_hits",
         type=positive_integer,
         default=2,
         help=(
-            "Consecutive raw classifications required to "
-            "confirm a regime change. Default: 2."
+            "Raw occurrences required to confirm a regime "
+            "inside the rolling window. Default: 2."
+        ),
+    )
+
+    parser.add_argument(
+        "--confirmation-window",
+        type=positive_integer,
+        default=3,
+        help=(
+            "Number of consecutive fiscal quarters in the "
+            "rolling confirmation window. Default: 3."
         ),
     )
 
@@ -712,7 +726,10 @@ def main() -> None:
         confirmed_signals = confirm_capital_cycle_signals(
             raw_signals=raw_signals,
             confirmation_required=(
-                args.confirmation_quarters
+                args.confirmation_hits
+            ),
+            confirmation_window=(
+                args.confirmation_window
             ),
         )
 
@@ -790,7 +807,10 @@ def main() -> None:
                 vintage=vintage,
                 thresholds=thresholds,
                 confirmation_required=(
-                    args.confirmation_quarters
+                    args.confirmation_hits
+                ),
+                confirmation_window=(
+                    args.confirmation_window
                 ),
             )
 

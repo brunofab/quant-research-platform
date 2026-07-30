@@ -1,3 +1,4 @@
+from collections import Counter, deque
 from dataclasses import dataclass
 
 from quant_research.signals.capital_cycle_features import (
@@ -19,11 +20,15 @@ class ConfirmedCapitalCycleSignal:
     raw_signal: CapitalCycleSignal
 
     candidate_regime: CapitalCycleRegime | None
-    candidate_age_quarters: int
+    candidate_hits: int
+
     confirmation_required: int
+    confirmation_window: int
 
     changed_this_period: bool
     sequence_restarted: bool
+
+    window_regimes: tuple[CapitalCycleRegime, ...]
 
     @property
     def raw_regime(self) -> CapitalCycleRegime:
@@ -48,11 +53,12 @@ class ConfirmedCapitalCycleSignal:
                 if self.candidate_regime is not None
                 else None
             ),
-            "candidate_age_quarters": (
-                self.candidate_age_quarters
-            ),
+            "candidate_hits": self.candidate_hits,
             "confirmation_required": (
                 self.confirmation_required
+            ),
+            "confirmation_window": (
+                self.confirmation_window
             ),
             "confirmation_pending": (
                 self.confirmation_pending
@@ -63,6 +69,10 @@ class ConfirmedCapitalCycleSignal:
             "sequence_restarted": (
                 self.sequence_restarted
             ),
+            "window_regimes": [
+                regime.value
+                for regime in self.window_regimes
+            ],
         }
 
 
@@ -77,15 +87,109 @@ def signal_period_key(
     )
 
 
+def summarize_candidate(
+    window_regimes: tuple[CapitalCycleRegime, ...],
+    confirmed_regime: CapitalCycleRegime,
+) -> tuple[
+    CapitalCycleRegime | None,
+    int,
+]:
+    """Return the strongest unconfirmed regime in the window."""
+
+    eligible_regimes = [
+        regime
+        for regime in window_regimes
+        if regime
+        not in {
+            confirmed_regime,
+            CapitalCycleRegime.MIXED,
+        }
+    ]
+
+    if not eligible_regimes:
+        return None, 0
+
+    counts: Counter[
+        CapitalCycleRegime
+    ] = Counter(eligible_regimes)
+
+    highest_count = max(
+        counts.values()
+    )
+
+    tied_regimes = {
+        regime
+        for regime, count in counts.items()
+        if count == highest_count
+    }
+
+    # If multiple candidates have the same number of hits,
+    # use the most recently observed one for display.
+    candidate = next(
+        regime
+        for regime in reversed(window_regimes)
+        if regime in tied_regimes
+    )
+
+    return candidate, highest_count
+
+
+def find_confirmed_candidate(
+    window_regimes: tuple[CapitalCycleRegime, ...],
+    confirmed_regime: CapitalCycleRegime,
+    confirmation_required: int,
+) -> CapitalCycleRegime | None:
+    """Return a uniquely confirmed candidate from the window."""
+
+    eligible_regimes = [
+        regime
+        for regime in window_regimes
+        if regime
+        not in {
+            confirmed_regime,
+            CapitalCycleRegime.MIXED,
+        }
+    ]
+
+    counts: Counter[
+        CapitalCycleRegime
+    ] = Counter(eligible_regimes)
+
+    qualifying_regimes = [
+        regime
+        for regime, count in counts.items()
+        if count >= confirmation_required
+    ]
+
+    # With the normal 2-of-3 rule there can only be one.
+    # For other configurations, refuse to choose if tied.
+    if len(qualifying_regimes) != 1:
+        return None
+
+    return qualifying_regimes[0]
+
+
 def confirm_capital_cycle_signals(
     raw_signals: list[CapitalCycleSignal],
     confirmation_required: int = 2,
+    confirmation_window: int = 3,
 ) -> list[ConfirmedCapitalCycleSignal]:
-    """Stabilize raw regimes using consecutive-quarter confirmation."""
+    """Stabilize raw regimes using rolling-window confirmation."""
 
     if confirmation_required <= 0:
         raise ValueError(
             "confirmation_required must be greater than zero."
+        )
+
+    if confirmation_window <= 0:
+        raise ValueError(
+            "confirmation_window must be greater than zero."
+        )
+
+    if confirmation_required > confirmation_window:
+        raise ValueError(
+            "confirmation_required cannot exceed "
+            "confirmation_window."
         )
 
     ordered = sorted(
@@ -98,8 +202,12 @@ def confirm_capital_cycle_signals(
     ] = []
 
     confirmed_regime: CapitalCycleRegime | None = None
-    candidate_regime: CapitalCycleRegime | None = None
-    candidate_age = 0
+
+    regime_window: deque[
+        CapitalCycleRegime
+    ] = deque(
+        maxlen=confirmation_window
+    )
 
     previous_period: tuple[int, int] | None = None
 
@@ -124,35 +232,68 @@ def confirm_capital_cycle_signals(
         changed_this_period = False
 
         if sequence_restarted:
-            # A missing fiscal period breaks the confirmation chain.
-            # Start a new sequence from the current raw regime.
-            confirmed_regime = raw_signal.regime
-            candidate_regime = None
-            candidate_age = 0
+            # A missing quarter starts a new independent sequence.
+            regime_window.clear()
+            regime_window.append(
+                raw_signal.regime
+            )
 
-        elif raw_signal.regime is confirmed_regime:
-            # The raw signal agrees with the confirmed regime.
-            candidate_regime = None
-            candidate_age = 0
+            confirmed_regime = (
+                raw_signal.regime
+            )
 
-        elif raw_signal.regime is CapitalCycleRegime.MIXED:
-            # MIXED represents uncertainty. It does not replace
-            # an already confirmed economic regime.
             candidate_regime = None
-            candidate_age = 0
+            candidate_hits = 0
 
         else:
-            if candidate_regime is raw_signal.regime:
-                candidate_age += 1
-            else:
-                candidate_regime = raw_signal.regime
-                candidate_age = 1
+            regime_window.append(
+                raw_signal.regime
+            )
 
-            if candidate_age >= confirmation_required:
-                confirmed_regime = raw_signal.regime
-                candidate_regime = None
-                candidate_age = 0
+            if confirmed_regime is None:
+                raise ValueError(
+                    "Confirmed regime was not initialized."
+                )
+
+            window_snapshot = tuple(
+                regime_window
+            )
+
+            confirmed_candidate = (
+                find_confirmed_candidate(
+                    window_regimes=window_snapshot,
+                    confirmed_regime=confirmed_regime,
+                    confirmation_required=(
+                        confirmation_required
+                    ),
+                )
+            )
+
+            if confirmed_candidate is not None:
+                confirmed_regime = (
+                    confirmed_candidate
+                )
+
                 changed_this_period = True
+
+                # Evidence used to confirm this regime must not
+                # immediately be reused to confirm a reversal.
+                regime_window.clear()
+                regime_window.append(
+                    raw_signal.regime
+                )
+
+                candidate_regime = None
+                candidate_hits = 0
+
+            else:
+                (
+                    candidate_regime,
+                    candidate_hits,
+                ) = summarize_candidate(
+                    window_regimes=window_snapshot,
+                    confirmed_regime=confirmed_regime,
+                )
 
         if confirmed_regime is None:
             raise ValueError(
@@ -165,12 +306,22 @@ def confirm_capital_cycle_signals(
                 regime=confirmed_regime,
                 raw_signal=raw_signal,
                 candidate_regime=candidate_regime,
-                candidate_age_quarters=candidate_age,
+                candidate_hits=candidate_hits,
                 confirmation_required=(
                     confirmation_required
                 ),
-                changed_this_period=changed_this_period,
-                sequence_restarted=sequence_restarted,
+                confirmation_window=(
+                    confirmation_window
+                ),
+                changed_this_period=(
+                    changed_this_period
+                ),
+                sequence_restarted=(
+                    sequence_restarted
+                ),
+                window_regimes=tuple(
+                    regime_window
+                ),
             )
         )
 
