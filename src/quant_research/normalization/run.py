@@ -15,6 +15,10 @@ from quant_research.normalization.fiscal_calendar import (
     backfill_historical_fiscal_periods,
     sync_fiscal_periods,
 )
+from quant_research.normalization.ratios import (
+    normalize_capex_intensity,
+    normalize_fcf_margin,
+)
 from quant_research.normalization.revenue import (
     normalize_revenue,
 )
@@ -30,6 +34,8 @@ NORMALIZERS: dict[str, Normalizer] = {
     "cfo": normalize_cfo,
     "capex": normalize_capex,
     "fcf": normalize_fcf,
+    "capex_intensity": normalize_capex_intensity,
+    "fcf_margin": normalize_fcf_margin,
 }
 
 
@@ -44,6 +50,14 @@ METRIC_DEPENDENCIES: dict[
         "cfo",
         "capex",
     ),
+    "capex_intensity": (
+        "capex",
+        "revenue",
+    ),
+    "fcf_margin": (
+        "fcf",
+        "revenue",
+    ),
 }
 
 
@@ -52,24 +66,36 @@ NORMALIZATION_ORDER = (
     "cfo",
     "capex",
     "fcf",
+    "capex_intensity",
+    "fcf_margin",
 )
 
 
 def resolve_metric_order(
     requested_metrics: list[str],
 ) -> list[str]:
-    """Add required dependencies and return a safe execution order."""
+    """Add dependencies and return a safe execution order."""
 
-    required_metrics: set[str] = set()
+    resolved: set[str] = set()
+    visiting: set[str] = set()
 
     def add_metric(metric: str) -> None:
-        if metric in required_metrics:
+        if metric in resolved:
             return
+
+        if metric in visiting:
+            raise ValueError(
+                "Circular normalization dependency involving "
+                f"{metric}."
+            )
+
+        visiting.add(metric)
 
         for dependency in METRIC_DEPENDENCIES[metric]:
             add_metric(dependency)
 
-        required_metrics.add(metric)
+        visiting.remove(metric)
+        resolved.add(metric)
 
     for metric in requested_metrics:
         add_metric(metric)
@@ -77,7 +103,7 @@ def resolve_metric_order(
     return [
         metric
         for metric in NORMALIZATION_ORDER
-        if metric in required_metrics
+        if metric in resolved
     ]
 
 
