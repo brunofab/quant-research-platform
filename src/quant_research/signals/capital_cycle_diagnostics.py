@@ -2,10 +2,13 @@ from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import pairwise
+from typing import Protocol
 
+from quant_research.signals.capital_cycle_features import (
+    CapitalCycleFeatureSnapshot,
+)
 from quant_research.signals.capital_cycle_regime import (
     CapitalCycleRegime,
-    CapitalCycleSignal,
     previous_fiscal_period_key,
 )
 
@@ -17,6 +20,13 @@ FEATURE_NAMES = (
     "capex_intensity_yoy_delta_qoq_delta",
     "fcf_margin_yoy_delta_qoq_delta",
 )
+
+
+class RegimeObservation(Protocol):
+    """Common interface for raw and confirmed regime observations."""
+
+    snapshot: CapitalCycleFeatureSnapshot
+    regime: CapitalCycleRegime
 
 
 @dataclass(frozen=True)
@@ -155,7 +165,7 @@ class CapitalCycleDiagnostics:
 
 
 def signal_period_key(
-    signal: CapitalCycleSignal,
+    signal: RegimeObservation,
 ) -> tuple[int, int]:
     """Return the fiscal-period key for one signal."""
 
@@ -187,6 +197,7 @@ def percentile(
     )
 
     lower_index = int(position)
+
     upper_index = min(
         lower_index + 1,
         len(ordered) - 1,
@@ -242,7 +253,7 @@ def build_feature_distribution(
 
 
 def build_regime_runs(
-    signals: list[CapitalCycleSignal],
+    signals: list[RegimeObservation],
 ) -> tuple[RegimeRun, ...]:
     """Build uninterrupted runs of identical regimes."""
 
@@ -325,7 +336,7 @@ def build_regime_runs(
 
 
 def build_transition_counts(
-    signals: list[CapitalCycleSignal],
+    signals: list[RegimeObservation],
 ) -> dict[
     tuple[CapitalCycleRegime, CapitalCycleRegime],
     int,
@@ -364,7 +375,7 @@ def build_transition_counts(
 
 
 def build_capital_cycle_diagnostics(
-    signals: list[CapitalCycleSignal],
+    signals: list[RegimeObservation],
 ) -> CapitalCycleDiagnostics:
     """Build historical diagnostics for capital-cycle signals."""
 
@@ -395,8 +406,7 @@ def build_capital_cycle_diagnostics(
             if total_periods > 0
             else Decimal(0)
         )
-        for regime, count
-        in regime_counts.items()
+        for regime, count in regime_counts.items()
     }
 
     runs = build_regime_runs(
@@ -432,18 +442,22 @@ def build_capital_cycle_diagnostics(
         if source is not destination
     )
 
-    feature_distributions = {
-        feature_name: build_feature_distribution(
-            [
-                getattr(
-                    signal.snapshot,
-                    feature_name,
-                )
-                for signal in ordered
-            ]
-        )
-        for feature_name in FEATURE_NAMES
-    } if ordered else {}
+    feature_distributions = (
+        {
+            feature_name: build_feature_distribution(
+                [
+                    getattr(
+                        signal.snapshot,
+                        feature_name,
+                    )
+                    for signal in ordered
+                ]
+            )
+            for feature_name in FEATURE_NAMES
+        }
+        if ordered
+        else {}
+    )
 
     return CapitalCycleDiagnostics(
         total_periods=total_periods,

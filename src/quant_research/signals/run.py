@@ -12,6 +12,10 @@ from quant_research.database.models import Company
 from quant_research.normalization.fiscal_period_resolver import (
     FiscalPeriodResolver,
 )
+from quant_research.signals.capital_cycle_confirmation import (
+    ConfirmedCapitalCycleSignal,
+    confirm_capital_cycle_signals,
+)
 from quant_research.signals.capital_cycle_diagnostics import (
     CapitalCycleDiagnostics,
     build_capital_cycle_diagnostics,
@@ -379,6 +383,158 @@ def print_diagnostics(
         )
 
 
+def print_confirmed_signals(
+    ticker: str,
+    signals: list[ConfirmedCapitalCycleSignal],
+    requested_as_of: date | None,
+    vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
+) -> None:
+    """Print raw and confirmed regimes side by side."""
+
+    print()
+
+    if requested_as_of is None:
+        print(
+            f"{ticker} confirmed capital-cycle regimes"
+        )
+    else:
+        print(
+            f"{ticker} confirmed capital-cycle regimes "
+            f"as of {requested_as_of}"
+        )
+
+    print(
+        f"Classifier: {thresholds.name.upper()}"
+    )
+
+    print(
+        f"Snapshot vintage: {vintage.value.upper()}"
+    )
+
+    if not signals:
+        print(
+            "No confirmed capital-cycle signals are available."
+        )
+        return
+
+    print()
+
+    print(
+        f"{'Fiscal period':<14}"
+        f"{'As of':<12}"
+        f"{'Raw':<16}"
+        f"{'Confirmed':<16}"
+        f"{'Candidate':<16}"
+        f"{'Progress':>10}"
+        f"{'Changed':>10}"
+    )
+
+    print("-" * 94)
+
+    for signal in signals:
+        snapshot = signal.snapshot
+
+        fiscal_period = (
+            f"FY{snapshot.fiscal_year} "
+            f"Q{snapshot.fiscal_quarter}"
+        )
+
+        candidate = (
+            signal.candidate_regime.value
+            if signal.candidate_regime is not None
+            else "-"
+        )
+
+        progress = (
+            f"{signal.candidate_age_quarters}/"
+            f"{signal.confirmation_required}"
+            if signal.confirmation_pending
+            else "-"
+        )
+
+        changed = (
+            "YES"
+            if signal.changed_this_period
+            else "NO"
+        )
+
+        print(
+            f"{fiscal_period:<14}"
+            f"{snapshot.as_of.isoformat():<12}"
+            f"{signal.raw_regime.value:<16}"
+            f"{signal.regime.value:<16}"
+            f"{candidate:<16}"
+            f"{progress:>10}"
+            f"{changed:>10}"
+        )
+
+def print_confirmation_comparison(
+    raw_diagnostics: CapitalCycleDiagnostics,
+    confirmed_diagnostics: CapitalCycleDiagnostics,
+    vintage: SnapshotVintage,
+    thresholds: CapitalCycleThresholds,
+    confirmation_required: int,
+) -> None:
+    """Compare raw and stabilized regime diagnostics."""
+
+    print()
+    print("Raw versus confirmed regime diagnostics")
+    print("-" * 72)
+
+    print(
+        f"Classifier: {thresholds.name.upper()}"
+    )
+
+    print(
+        f"Snapshot vintage: {vintage.value.upper()}"
+    )
+
+    print(
+        "Confirmation required: "
+        f"{confirmation_required} consecutive quarters"
+    )
+
+    print()
+
+    print(
+        f"{'Mode':<14}"
+        f"{'Periods':>10}"
+        f"{'Switches':>11}"
+        f"{'Avg run':>12}"
+        f"{'Longest':>11}"
+        f"{'Mixed':>11}"
+    )
+
+    print("-" * 70)
+
+    for label, diagnostics in (
+        ("RAW", raw_diagnostics),
+        ("CONFIRMED", confirmed_diagnostics),
+    ):
+        longest_length = (
+            diagnostics.longest_run.length
+            if diagnostics.longest_run is not None
+            else 0
+        )
+
+        mixed_share = (
+            diagnostics.regime_shares[
+                CapitalCycleRegime.MIXED
+            ]
+            * Decimal(100)
+        )
+
+        print(
+            f"{label:<14}"
+            f"{diagnostics.total_periods:>10}"
+            f"{diagnostics.regime_switches:>11}"
+            f"{diagnostics.average_run_length:>12.2f}"
+            f"{longest_length:>11}"
+            f"{mixed_share:>10.1f}%"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
@@ -464,6 +620,29 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    parser.add_argument(
+        "--confirmation-quarters",
+        type=positive_integer,
+        default=2,
+        help=(
+            "Consecutive raw classifications required to "
+            "confirm a regime change. Default: 2."
+        ),
+    )
+
+    parser.add_argument(
+        "--regime-view",
+        choices=(
+            "raw",
+            "confirmed",
+            "both",
+        ),
+        default="both",
+        help=(
+            "Regime output to show. Default: both."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -525,44 +704,94 @@ def main() -> None:
         )
 
     for thresholds in threshold_profiles:
-        signals = classify_capital_cycle_snapshots(
+        raw_signals = classify_capital_cycle_snapshots(
             snapshots=selected_per_period,
             thresholds=thresholds,
         )
 
-        selected_signals = signals[
+        confirmed_signals = confirm_capital_cycle_signals(
+            raw_signals=raw_signals,
+            confirmation_required=(
+                args.confirmation_quarters
+            ),
+        )
+
+        selected_raw_signals = raw_signals[
             -args.latest:
         ]
 
-        diagnostics = (
+        selected_confirmed_signals = (
+            confirmed_signals[
+                -args.latest:
+            ]
+        )
+
+        raw_diagnostics = (
             build_capital_cycle_diagnostics(
-                signals=signals
+                signals=raw_signals
+            )
+        )
+
+        confirmed_diagnostics = (
+            build_capital_cycle_diagnostics(
+                signals=confirmed_signals
             )
         )
 
         if not args.diagnostics_only:
-            print_signals(
-                ticker=ticker,
-                signals=selected_signals,
-                requested_as_of=args.as_of,
-                vintage=vintage,
-                thresholds=thresholds,
-            )
+            if args.regime_view in {
+                "raw",
+                "both",
+            }:
+                print_signals(
+                    ticker=ticker,
+                    signals=selected_raw_signals,
+                    requested_as_of=args.as_of,
+                    vintage=vintage,
+                    thresholds=thresholds,
+                )
 
             if args.details:
                 print_signal_details(
-                    signals=selected_signals,
+                    signals=selected_raw_signals,
                     thresholds=thresholds,
                 )
+
+            if args.regime_view in {
+                "confirmed",
+                "both",
+            }:
+                print_confirmed_signals(
+                    ticker=ticker,
+                    signals=(
+                        selected_confirmed_signals
+                    ),
+                    requested_as_of=args.as_of,
+                    vintage=vintage,
+                    thresholds=thresholds,
+                )
+
+        if args.diagnostics:
+            print_diagnostics(
+                diagnostics=raw_diagnostics,
+                vintage=vintage,
+                thresholds=thresholds,
+            )
 
         if (
             args.diagnostics
             or args.diagnostics_only
         ):
-            print_diagnostics(
-                diagnostics=diagnostics,
+            print_confirmation_comparison(
+                raw_diagnostics=raw_diagnostics,
+                confirmed_diagnostics=(
+                    confirmed_diagnostics
+                ),
                 vintage=vintage,
                 thresholds=thresholds,
+                confirmation_required=(
+                    args.confirmation_quarters
+                ),
             )
 
 
