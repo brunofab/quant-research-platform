@@ -1,4 +1,5 @@
 import CapitalCycleCharts from './CapitalCycleCharts'
+import RegimeTimeline from './RegimeTimeline'
 import type {
   CapitalCycleHistoryPeriod,
 } from '../types/capitalCycle'
@@ -90,6 +91,8 @@ function CompanyHistory({
 
       {!loading && !error && periods.length > 0 && (
         <>
+          <RegimeTimeline periods={periods} />
+          
           <CapitalCycleCharts periods={periods} />
 
           <div className="history-table-heading">
