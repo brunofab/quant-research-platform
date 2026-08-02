@@ -3,6 +3,7 @@ Description=Quant Research Platform refresh
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service
+OnFailure=quant-research-refresh-notify.service
 
 [Service]
 Type=oneshot
@@ -11,3 +12,8 @@ WorkingDirectory=/home/bruno/apps/quant-research-platform
 ExecStart=/usr/bin/docker compose run --rm research python -m quant_research.pipeline refresh --all-companies
 TimeoutStartSec=2h
 Nice=10
+
+# Exit code 75 means that another refresh already
+# owns the PostgreSQL advisory lock. This is not
+# considered a failure and should not send an alert.
+SuccessExitStatus=75

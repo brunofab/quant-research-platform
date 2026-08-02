@@ -1,0 +1,11 @@
+[Unit]
+Description=Quant Research refresh failure notification
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/quant-research/notifications.env
+ExecStart=/usr/bin/python3 /home/bruno/apps/quant-research-platform/deploy/notifications/send_refresh_failure.py
+TimeoutStartSec=45s
