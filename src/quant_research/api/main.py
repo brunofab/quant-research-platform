@@ -19,6 +19,9 @@ from quant_research.signals.capital_cycle_thresholds import (
     THRESHOLD_PROFILES,
     CapitalCycleThresholds,
 )
+from quant_research.signals.history import (
+    build_company_history,
+)
 from quant_research.signals.universe import (
     build_universe_overview,
 )
@@ -174,4 +177,75 @@ def capital_cycle_overview(
         raise HTTPException(
             status_code=400,
             detail=str(error),
+        ) from error
+
+
+@app.get(
+    "/api/v1/capital-cycle/history/{ticker}"
+)
+def capital_cycle_history(
+    ticker: str,
+    session: Annotated[
+        Session,
+        Depends(get_session),
+    ],
+    vintage: VintageName = "latest",
+    classifier: ClassifierName = "baseline",
+    as_of: date | None = None,
+    confirmation_hits: Annotated[
+        int,
+        Query(ge=1),
+    ] = 2,
+    confirmation_window: Annotated[
+        int,
+        Query(ge=1),
+    ] = 3,
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=200),
+    ] = None,
+) -> dict[str, object]:
+    """Return historical capital-cycle signals."""
+
+    if confirmation_hits > confirmation_window:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "confirmation_hits cannot exceed "
+                "confirmation_window."
+            ),
+        )
+
+    try:
+        return build_company_history(
+            session=session,
+            ticker=ticker,
+            vintage=SnapshotVintage(vintage),
+            as_of=as_of,
+            threshold_profiles=(
+                resolve_threshold_profiles(
+                    classifier
+                )
+            ),
+            confirmation_hits=confirmation_hits,
+            confirmation_window=(
+                confirmation_window
+            ),
+            limit=limit,
+        )
+
+    except ValueError as error:
+        message = str(error)
+
+        status_code = (
+            404
+            if message.startswith(
+                "Unknown company ticker"
+            )
+            else 400
+        )
+
+        raise HTTPException(
+            status_code=status_code,
+            detail=message,
         ) from error
