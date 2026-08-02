@@ -1,0 +1,13 @@
+[Unit]
+Description=Quant Research Platform refresh
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=bruno
+WorkingDirectory=/home/bruno/apps/quant-research-platform
+ExecStart=/usr/bin/docker compose run --rm research python -m quant_research.pipeline refresh --all-companies
+TimeoutStartSec=2h
+Nice=10

@@ -3,11 +3,12 @@ from __future__ import annotations
 import shlex
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
 from quant_research.database.connection import (
@@ -30,6 +31,59 @@ from quant_research.signals.capital_cycle_thresholds import (
 from quant_research.signals.universe import (
     build_company_signal_series,
 )
+
+PIPELINE_LOCK_NAMESPACE = 1_726_001
+PIPELINE_LOCK_ID = 1
+
+
+class PipelineAlreadyRunningError(RuntimeError):
+    """Raised when another refresh owns the global lock."""
+
+
+@contextmanager
+def acquire_refresh_lock(
+    engine: Engine,
+) -> Iterator[None]:
+    """Prevent concurrent refresh-pipeline executions."""
+
+    parameters = {
+        "namespace": PIPELINE_LOCK_NAMESPACE,
+        "lock_id": PIPELINE_LOCK_ID,
+    }
+
+    with engine.connect() as connection:
+        acquired = connection.scalar(
+            text(
+                "SELECT pg_try_advisory_lock("
+                ":namespace, :lock_id"
+                ")"
+            ),
+            parameters,
+        )
+
+        # End the implicit SQLAlchemy transaction.
+        # The advisory lock itself is session-scoped
+        # and therefore remains held.
+        connection.commit()
+
+        if acquired is not True:
+            raise PipelineAlreadyRunningError(
+                "Another refresh pipeline is "
+                "already running."
+            )
+
+        try:
+            yield
+        finally:
+            connection.scalar(
+                text(
+                    "SELECT pg_advisory_unlock("
+                    ":namespace, :lock_id"
+                    ")"
+                ),
+                parameters,
+            )
+            connection.commit()
 
 
 @dataclass(frozen=True)
@@ -511,7 +565,7 @@ def determine_run_status(
     return "partial"
 
 
-def refresh_companies(
+def _refresh_companies_without_lock(
     requested_tickers: Sequence[str] | None,
     validate_signals: bool = True,
 ) -> PipelineRefreshResult:
@@ -693,3 +747,21 @@ def refresh_companies(
         companies_failed=companies_failed,
         records_inserted=records_inserted,
     )
+
+
+def refresh_companies(
+    requested_tickers: Sequence[str] | None,
+    validate_signals: bool = True,
+) -> PipelineRefreshResult:
+    """Run the refresh while holding the global lock."""
+
+    lock_engine = create_database_engine()
+
+    try:
+        with acquire_refresh_lock(lock_engine):
+            return _refresh_companies_without_lock(
+                requested_tickers=requested_tickers,
+                validate_signals=validate_signals,
+            )
+    finally:
+        lock_engine.dispose()

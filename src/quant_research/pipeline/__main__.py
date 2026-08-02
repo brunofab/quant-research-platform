@@ -1,7 +1,9 @@
 import argparse
+import sys
 from collections.abc import Sequence
 
 from quant_research.pipeline.refresh import (
+    PipelineAlreadyRunningError,
     refresh_companies,
 )
 
@@ -101,12 +103,19 @@ def main(
         else parsed.tickers
     )
 
-    result = refresh_companies(
-        requested_tickers=requested_tickers,
-        validate_signals=(
-            not parsed.skip_signal_validation
-        ),
-    )
+    try:
+        result = refresh_companies(
+            requested_tickers=requested_tickers,
+            validate_signals=(
+                not parsed.skip_signal_validation
+            ),
+        )
+    except PipelineAlreadyRunningError as error:
+        print(
+            f"Refresh skipped: {error}",
+            file=sys.stderr,
+        )
+        return 75
 
     return (
         0

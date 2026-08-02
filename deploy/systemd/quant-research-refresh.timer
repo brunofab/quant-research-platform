@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Quant Research Platform refresh
+
+[Timer]
+OnCalendar=*-*-* 06:30:00 Europe/Vienna
+Persistent=true
+AccuracySec=1min
+Unit=quant-research-refresh.service
+
+[Install]
+WantedBy=timers.target
