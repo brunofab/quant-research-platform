@@ -4,6 +4,8 @@ import type {
 
 type UniverseTableProps = {
   companies: CapitalCycleCompany[]
+  selectedTicker: string | null
+  onSelectTicker: (ticker: string) => void
 }
 
 function formatValue(
@@ -31,6 +33,8 @@ function regimeClassName(
 
 function UniverseTable({
   companies,
+  selectedTicker,
+  onSelectTicker,
 }: UniverseTableProps) {
   return (
     <div className="table-wrapper">
@@ -58,10 +62,26 @@ function UniverseTable({
             const features =
               company.features_percentage_points
 
+            const isSelected =
+              company.ticker === selectedTicker
+
             return (
-              <tr key={company.ticker}>
-                <td className="ticker">
-                  {company.ticker}
+              <tr
+                key={company.ticker}
+                className={
+                  isSelected ? 'selected-row' : undefined
+                }
+              >
+                <td>
+                  <button
+                    type="button"
+                    className="ticker-button"
+                    onClick={() => {
+                      onSelectTicker(company.ticker)
+                    }}
+                  >
+                    {company.ticker}
+                  </button>
                 </td>
 
                 <td>

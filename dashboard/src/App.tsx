@@ -4,6 +4,7 @@ import {
 } from 'react'
 import type { FormEvent } from 'react'
 
+import CompanyHistory from './components/CompanyHistory'
 import DashboardControls from './components/DashboardControls'
 import type {
   Classifier,
@@ -11,6 +12,7 @@ import type {
 } from './components/DashboardControls'
 import UniverseTable from './components/UniverseTable'
 import type {
+  CapitalCycleHistoryPayload,
   CapitalCyclePayload,
 } from './types/capitalCycle'
 
@@ -62,6 +64,18 @@ function App() {
 
   const [refreshKey, setRefreshKey] = useState(0)
 
+  const [selectedTicker, setSelectedTicker] =
+    useState<string | null>(null)
+
+  const [historyData, setHistoryData] =
+    useState<CapitalCycleHistoryPayload | null>(null)
+
+  const [historyLoading, setHistoryLoading] =
+    useState(false)
+
+  const [historyError, setHistoryError] =
+    useState<string | null>(null)
+
   useEffect(() => {
     const controller = new AbortController()
 
@@ -97,23 +111,8 @@ function App() {
         )
 
         if (!response.ok) {
-          let detail = ''
-
-          try {
-            const errorPayload =
-              (await response.json()) as {
-                detail?: string
-              }
-
-            detail = errorPayload.detail
-              ? `: ${errorPayload.detail}`
-              : ''
-          } catch {
-            detail = ''
-          }
-
           throw new Error(
-            `API returned HTTP ${response.status}${detail}`,
+            `API returned HTTP ${response.status}`,
           )
         }
 
@@ -148,6 +147,94 @@ function App() {
     }
   }, [appliedFilters, refreshKey])
 
+  useEffect(() => {
+    if (!selectedTicker) {
+      setHistoryData(null)
+      setHistoryError(null)
+      setHistoryLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+
+    const loadHistory = async () => {
+      setHistoryLoading(true)
+      setHistoryError(null)
+
+      try {
+        const parameters = new URLSearchParams({
+          vintage: appliedFilters.vintage,
+          classifier: appliedFilters.classifier,
+          confirmation_hits: '2',
+          confirmation_window: '3',
+          limit: '24',
+        })
+
+        const response = await fetch(
+          `/api/v1/capital-cycle/history/` +
+            `${encodeURIComponent(selectedTicker)}` +
+            `?${parameters}`,
+          {
+            signal: controller.signal,
+          },
+        )
+
+        if (!response.ok) {
+          let detail = ''
+
+          try {
+            const payload =
+              (await response.json()) as {
+                detail?: string
+              }
+
+            detail = payload.detail
+              ? `: ${payload.detail}`
+              : ''
+          } catch {
+            detail = ''
+          }
+
+          throw new Error(
+            `API returned HTTP ${response.status}${detail}`,
+          )
+        }
+
+        const payload =
+          (await response.json()) as CapitalCycleHistoryPayload
+
+        setHistoryData(payload)
+      } catch (unknownError) {
+        if (
+          unknownError instanceof DOMException &&
+          unknownError.name === 'AbortError'
+        ) {
+          return
+        }
+
+        setHistoryError(
+          unknownError instanceof Error
+            ? unknownError.message
+            : 'Unknown history API error',
+        )
+      } finally {
+        if (!controller.signal.aborted) {
+          setHistoryLoading(false)
+        }
+      }
+    }
+
+    void loadHistory()
+
+    return () => {
+      controller.abort()
+    }
+  }, [
+    selectedTicker,
+    appliedFilters,
+    refreshKey,
+  ])
+
   const handleSubmit = (
     event: FormEvent<HTMLFormElement>,
   ) => {
@@ -172,6 +259,8 @@ function App() {
     if (filtersChanged) {
       setTickerInput(nextFilters.tickers)
       setAppliedFilters(nextFilters)
+      setSelectedTicker(null)
+      setHistoryData(null)
       return
     }
 
@@ -180,6 +269,9 @@ function App() {
 
   const classifierResult =
     data?.classifiers[0]
+
+  const historyClassifier =
+    historyData?.classifiers[0]
 
   return (
     <main>
@@ -265,6 +357,8 @@ function App() {
               companies={
                 classifierResult.companies
               }
+              selectedTicker={selectedTicker}
+              onSelectTicker={setSelectedTicker}
             />
           ) : (
             <div className="empty-message">
@@ -273,6 +367,28 @@ function App() {
             </div>
           )}
         </section>
+      )}
+
+      {selectedTicker && (
+        <CompanyHistory
+          ticker={selectedTicker}
+          classifier={
+            historyClassifier?.classifier ??
+            appliedFilters.classifier
+          }
+          vintage={
+            historyData?.snapshot_vintage ??
+            appliedFilters.vintage
+          }
+          periods={
+            historyClassifier?.periods ?? []
+          }
+          loading={historyLoading}
+          error={historyError}
+          onClose={() => {
+            setSelectedTicker(null)
+          }}
+        />
       )}
     </main>
   )

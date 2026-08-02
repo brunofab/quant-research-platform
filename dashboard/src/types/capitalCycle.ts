@@ -43,3 +43,26 @@ export type CapitalCyclePayload = {
   }
   classifiers: CapitalCycleClassifier[]
 }
+
+export type CapitalCycleHistoryPeriod = Omit<
+  CapitalCycleCompany,
+  'ticker' | 'status'
+>
+
+export type CapitalCycleHistoryPayload = {
+  schema_version: number
+  ticker: string
+  requested_as_of: string | null
+  snapshot_vintage: string
+  units: {
+    features: string
+  }
+  confirmation: {
+    required_hits: number
+    window_quarters: number
+  }
+  classifiers: Array<{
+    classifier: string
+    periods: CapitalCycleHistoryPeriod[]
+  }>
+}

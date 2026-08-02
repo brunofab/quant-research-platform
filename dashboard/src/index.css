@@ -341,3 +341,75 @@ tbody tr:last-child td {
     grid-column: auto;
   }
 }
+
+.ticker-button {
+  padding: 0;
+  border: 0;
+  color: #ffffff;
+  background: transparent;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.ticker-button:hover {
+  color: #9fc5ff;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.selected-row {
+  background: #182131;
+}
+
+.history-card {
+  margin-top: 24px;
+}
+
+.history-header {
+  align-items: flex-start;
+}
+
+.history-eyebrow {
+  margin: 0 0 7px;
+  color: #75839d;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.close-history-button {
+  padding: 8px 12px;
+  border: 1px solid #354158;
+  border-radius: 8px;
+  color: #b8c1d1;
+  background: #171d28;
+  cursor: pointer;
+}
+
+.close-history-button:hover {
+  color: #ffffff;
+  background: #202838;
+}
+
+.history-message {
+  margin: 20px;
+}
+
+.history-table {
+  min-width: 1250px;
+}
+
+.history-table th:first-child,
+.history-table td:first-child,
+.history-table th:nth-child(2),
+.history-table td:nth-child(2),
+.history-table th:nth-child(3),
+.history-table td:nth-child(3),
+.history-table th:nth-child(4),
+.history-table td:nth-child(4),
+.history-table th:nth-child(5),
+.history-table td:nth-child(5) {
+  text-align: left;
+}
