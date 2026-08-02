@@ -1,8 +1,3 @@
-import {
-  useEffect,
-  useState,
-} from 'react'
-
 import QuarterDiagnosisPanel from './QuarterDiagnosisPanel'
 import type {
   CapitalCycleHistoryPeriod,
@@ -10,16 +5,8 @@ import type {
 
 type RegimeTimelineProps = {
   periods: CapitalCycleHistoryPeriod[]
-}
-
-function periodKey(
-  period: CapitalCycleHistoryPeriod,
-): string {
-  return (
-    `${period.fiscal_year}-` +
-    `${period.fiscal_quarter}-` +
-    `${period.as_of ?? 'unknown'}`
-  )
+  selectedPeriodIndex: number
+  onSelectPeriodIndex: (index: number) => void
 }
 
 function regimeClassName(
@@ -37,35 +24,17 @@ function regimeClassName(
 
 function RegimeTimeline({
   periods,
+  selectedPeriodIndex,
+  onSelectPeriodIndex,
 }: RegimeTimelineProps) {
-  const [selectedPeriodKey, setSelectedPeriodKey] =
-    useState<string | null>(() => {
-      const latestPeriod =
-        periods[periods.length - 1]
-
-      return latestPeriod
-        ? periodKey(latestPeriod)
-        : null
-    })
-
-  useEffect(() => {
-    const latestPeriod =
-      periods[periods.length - 1]
-
-    setSelectedPeriodKey(
-      latestPeriod
-        ? periodKey(latestPeriod)
-        : null,
-    )
-  }, [periods])
+  const effectiveSelectedIndex =
+    selectedPeriodIndex >= 0 &&
+    selectedPeriodIndex < periods.length
+      ? selectedPeriodIndex
+      : periods.length - 1
 
   const selectedPeriod =
-    periods.find(
-      (period) =>
-        periodKey(period) === selectedPeriodKey,
-    ) ??
-    periods[periods.length - 1] ??
-    null
+    periods[effectiveSelectedIndex] ?? null
 
   return (
     <section className="regime-timeline-section">
@@ -93,9 +62,7 @@ function RegimeTimeline({
       </div>
 
       <div className="regime-timeline">
-        {periods.map((period) => {
-          const key = periodKey(period)
-
+        {periods.map((period, index) => {
           const rawDiffers =
             period.raw_regime !==
             period.confirmed_regime
@@ -108,11 +75,15 @@ function RegimeTimeline({
             period.changed_this_period
 
           const isSelected =
-            key === periodKey(selectedPeriod)
+            index === effectiveSelectedIndex
 
           return (
             <button
-              key={key}
+              key={
+                `${period.fiscal_year}-` +
+                `${period.fiscal_quarter}-` +
+                `${period.as_of}`
+              }
               type="button"
               className={
                 `${regimeClassName(
@@ -153,7 +124,7 @@ function RegimeTimeline({
                 .join('\n')}
               aria-pressed={isSelected}
               onClick={() => {
-                setSelectedPeriodKey(key)
+                onSelectPeriodIndex(index)
               }}
             >
               <span className="timeline-period-label">

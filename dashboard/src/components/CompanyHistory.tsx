@@ -1,3 +1,8 @@
+import {
+  useEffect,
+  useState,
+} from 'react'
+
 import CapitalCycleCharts from './CapitalCycleCharts'
 import RegimeTimeline from './RegimeTimeline'
 import type {
@@ -46,6 +51,21 @@ function CompanyHistory({
   error,
   onClose,
 }: CompanyHistoryProps) {
+  const [selectedPeriodIndex, setSelectedPeriodIndex] =
+    useState(() =>
+      periods.length > 0
+        ? periods.length - 1
+        : -1,
+    )
+
+  useEffect(() => {
+    setSelectedPeriodIndex(
+      periods.length > 0
+        ? periods.length - 1
+        : -1,
+    )
+  }, [periods])
+
   return (
     <section className="dashboard-card history-card">
       <div className="card-header history-header">
@@ -91,9 +111,18 @@ function CompanyHistory({
 
       {!loading && !error && periods.length > 0 && (
         <>
-          <RegimeTimeline periods={periods} />
-          
-          <CapitalCycleCharts periods={periods} />
+          <RegimeTimeline
+            periods={periods}
+            selectedPeriodIndex={selectedPeriodIndex}
+            onSelectPeriodIndex={
+              setSelectedPeriodIndex
+            }
+          />
+
+          <CapitalCycleCharts
+            periods={periods}
+            selectedPeriodIndex={selectedPeriodIndex}
+          />
 
           <div className="history-table-heading">
             <div>
@@ -130,9 +159,12 @@ function CompanyHistory({
               </thead>
 
               <tbody>
-                {periods.map((period) => {
+                {periods.map((period, index) => {
                   const features =
                     period.features_percentage_points
+
+                  const isSelected =
+                    index === selectedPeriodIndex
 
                   return (
                     <tr
@@ -140,6 +172,11 @@ function CompanyHistory({
                         `${period.fiscal_year}-` +
                         `${period.fiscal_quarter}-` +
                         `${period.as_of}`
+                      }
+                      className={
+                        isSelected
+                          ? 'selected-row'
+                          : undefined
                       }
                     >
                       <td>
