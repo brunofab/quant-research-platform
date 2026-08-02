@@ -8,9 +8,12 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -436,3 +439,79 @@ class FiscalPeriod(Base):
         index=True,
     )
 
+
+class PipelineRun(Base):
+    """Record one execution of a data pipeline."""
+
+    __tablename__ = "pipeline_runs"
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'running', "
+            "'succeeded', "
+            "'partial', "
+            "'failed'"
+            ")",
+            name="ck_pipeline_runs_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+    )
+
+    run_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="running",
+        index=True,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    companies_total: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    companies_succeeded: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    companies_failed: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    records_inserted: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default="0",
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
