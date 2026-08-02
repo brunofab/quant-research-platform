@@ -4,6 +4,7 @@ Wants=network-online.target
 After=network-online.target docker.service quant-research-refresh.service
 Requires=docker.service
 OnFailure=quant-research-backup-notify.service
+OnSuccess=quant-research-offsite-backup.service
 
 [Service]
 Type=oneshot

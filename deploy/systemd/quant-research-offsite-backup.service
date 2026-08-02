@@ -1,0 +1,17 @@
+[Unit]
+Description=Quant Research encrypted offsite backup
+Wants=network-online.target
+After=network-online.target
+OnFailure=quant-research-offsite-backup-notify.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/bruno/apps/quant-research-platform
+EnvironmentFile=/etc/quant-research/restic.env
+
+ExecStart=/usr/bin/python3 /home/bruno/apps/quant-research-platform/deploy/backups/offsite_restic_backup.py --backup-dir /var/backups/quant-research/postgres --filename-prefix quant_research --restic-binary /usr/bin/restic --host quant-research-vps --keep-daily 30 --keep-weekly 8 --keep-monthly 12
+
+TimeoutStartSec=2h
+Nice=10
+UMask=0077

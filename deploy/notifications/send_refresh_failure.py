@@ -250,6 +250,9 @@ def service_label(
         "quant-research-backup.service": (
             "PostgreSQL backup and restore validation"
         ),
+        "quant-research-offsite-backup.service": (
+            "Encrypted offsite backup"
+        ),
     }
 
     return labels.get(
