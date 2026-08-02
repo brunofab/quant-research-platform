@@ -10,11 +10,15 @@ import type {
   Classifier,
   Vintage,
 } from './components/DashboardControls'
+import PipelineStatusCard from './components/PipelineStatusCard'
 import UniverseTable from './components/UniverseTable'
 import type {
   CapitalCycleHistoryPayload,
   CapitalCyclePayload,
 } from './types/capitalCycle'
+import type {
+  PipelineStatusResponse,
+} from './types/pipeline'
 
 type DashboardFilters = {
   tickers: string
@@ -33,7 +37,9 @@ function normalizeTickerInput(
 ): string {
   return value
     .split(',')
-    .map((ticker) => ticker.trim().toUpperCase())
+    .map((ticker) =>
+      ticker.trim().toUpperCase(),
+    )
     .filter(Boolean)
     .join(',')
 }
@@ -45,51 +51,85 @@ function App() {
   const [error, setError] =
     useState<string | null>(null)
 
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] =
+    useState(false)
 
-  const [tickerInput, setTickerInput] = useState(
-    DEFAULT_FILTERS.tickers,
-  )
+  const [tickerInput, setTickerInput] =
+    useState(DEFAULT_FILTERS.tickers)
 
   const [vintage, setVintage] =
-    useState<Vintage>(DEFAULT_FILTERS.vintage)
+    useState<Vintage>(
+      DEFAULT_FILTERS.vintage,
+    )
 
   const [classifier, setClassifier] =
     useState<Classifier>(
       DEFAULT_FILTERS.classifier,
     )
 
-  const [appliedFilters, setAppliedFilters] =
-    useState<DashboardFilters>(DEFAULT_FILTERS)
+  const [
+    appliedFilters,
+    setAppliedFilters,
+  ] = useState<DashboardFilters>(
+    DEFAULT_FILTERS,
+  )
 
-  const [refreshKey, setRefreshKey] = useState(0)
+  const [refreshKey, setRefreshKey] =
+    useState(0)
 
-  const [selectedTicker, setSelectedTicker] =
-    useState<string | null>(null)
+  const [
+    selectedTicker,
+    setSelectedTicker,
+  ] = useState<string | null>(null)
 
   const [historyData, setHistoryData] =
-    useState<CapitalCycleHistoryPayload | null>(null)
+    useState<CapitalCycleHistoryPayload | null>(
+      null,
+    )
 
-  const [historyLoading, setHistoryLoading] =
-    useState(false)
+  const [
+    historyLoading,
+    setHistoryLoading,
+  ] = useState(false)
 
   const [historyError, setHistoryError] =
     useState<string | null>(null)
 
+  const [
+    pipelineStatus,
+    setPipelineStatus,
+  ] = useState<PipelineStatusResponse | null>(
+    null,
+  )
+
+  const [
+    pipelineStatusLoading,
+    setPipelineStatusLoading,
+  ] = useState(true)
+
+  const [
+    pipelineStatusError,
+    setPipelineStatusError,
+  ] = useState<string | null>(null)
+
   useEffect(() => {
-    const controller = new AbortController()
+    const controller =
+      new AbortController()
 
     const loadOverview = async () => {
       setLoading(true)
       setError(null)
 
       try {
-        const parameters = new URLSearchParams({
-          vintage: appliedFilters.vintage,
-          classifier: appliedFilters.classifier,
-          confirmation_hits: '2',
-          confirmation_window: '3',
-        })
+        const parameters =
+          new URLSearchParams({
+            vintage:
+              appliedFilters.vintage,
+            classifier:
+              appliedFilters.classifier,
+            confirmation_hits: '2',
+            confirmation_window: '3',
+          })
 
         const normalizedTickers =
           normalizeTickerInput(
@@ -122,8 +162,10 @@ function App() {
         setData(payload)
       } catch (unknownError) {
         if (
-          unknownError instanceof DOMException &&
-          unknownError.name === 'AbortError'
+          unknownError instanceof
+            DOMException &&
+          unknownError.name ===
+            'AbortError'
         ) {
           return
         }
@@ -134,7 +176,9 @@ function App() {
             : 'Unknown API error',
         )
       } finally {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted
+        ) {
           setLoading(false)
         }
       }
@@ -155,24 +199,30 @@ function App() {
       return
     }
 
-    const controller = new AbortController()
+    const controller =
+      new AbortController()
 
     const loadHistory = async () => {
       setHistoryLoading(true)
       setHistoryError(null)
 
       try {
-        const parameters = new URLSearchParams({
-          vintage: appliedFilters.vintage,
-          classifier: appliedFilters.classifier,
-          confirmation_hits: '2',
-          confirmation_window: '3',
-          limit: '24',
-        })
+        const parameters =
+          new URLSearchParams({
+            vintage:
+              appliedFilters.vintage,
+            classifier:
+              appliedFilters.classifier,
+            confirmation_hits: '2',
+            confirmation_window: '3',
+            limit: '24',
+          })
 
         const response = await fetch(
           `/api/v1/capital-cycle/history/` +
-            `${encodeURIComponent(selectedTicker)}` +
+            `${encodeURIComponent(
+              selectedTicker,
+            )}` +
             `?${parameters}`,
           {
             signal: controller.signal,
@@ -196,7 +246,9 @@ function App() {
           }
 
           throw new Error(
-            `API returned HTTP ${response.status}${detail}`,
+            `API returned HTTP ` +
+              `${response.status}` +
+              `${detail}`,
           )
         }
 
@@ -206,8 +258,10 @@ function App() {
         setHistoryData(payload)
       } catch (unknownError) {
         if (
-          unknownError instanceof DOMException &&
-          unknownError.name === 'AbortError'
+          unknownError instanceof
+            DOMException &&
+          unknownError.name ===
+            'AbortError'
         ) {
           return
         }
@@ -218,7 +272,9 @@ function App() {
             : 'Unknown history API error',
         )
       } finally {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted
+        ) {
           setHistoryLoading(false)
         }
       }
@@ -234,6 +290,69 @@ function App() {
     appliedFilters,
     refreshKey,
   ])
+
+  useEffect(() => {
+    const controller =
+      new AbortController()
+
+    const loadPipelineStatus =
+      async () => {
+        setPipelineStatusLoading(true)
+        setPipelineStatusError(null)
+
+        try {
+          const response = await fetch(
+            '/api/v1/pipeline/status',
+            {
+              signal: controller.signal,
+            },
+          )
+
+          if (!response.ok) {
+            throw new Error(
+              `Request failed with status ` +
+                `${response.status}.`,
+            )
+          }
+
+          const responseData =
+            (await response.json()) as PipelineStatusResponse
+
+          setPipelineStatus(
+            responseData,
+          )
+        } catch (requestError) {
+          if (
+            controller.signal.aborted
+          ) {
+            return
+          }
+
+          const message =
+            requestError instanceof Error
+              ? requestError.message
+              : 'Unknown pipeline status error.'
+
+          setPipelineStatusError(
+            message,
+          )
+        } finally {
+          if (
+            !controller.signal.aborted
+          ) {
+            setPipelineStatusLoading(
+              false,
+            )
+          }
+        }
+      }
+
+    void loadPipelineStatus()
+
+    return () => {
+      controller.abort()
+    }
+  }, [])
 
   const handleSubmit = (
     event: FormEvent<HTMLFormElement>,
@@ -257,14 +376,18 @@ function App() {
         appliedFilters.classifier
 
     if (filtersChanged) {
-      setTickerInput(nextFilters.tickers)
+      setTickerInput(
+        nextFilters.tickers,
+      )
       setAppliedFilters(nextFilters)
       setSelectedTicker(null)
       setHistoryData(null)
       return
     }
 
-    setRefreshKey((current) => current + 1)
+    setRefreshKey(
+      (current) => current + 1,
+    )
   }
 
   const classifierResult =
@@ -281,24 +404,35 @@ function App() {
             Quant Research Platform
           </p>
 
-          <h1>Capital-Cycle Overview</h1>
+          <h1>
+            Capital-Cycle Overview
+          </h1>
 
           <p className="subtitle">
-            Point-in-time investment and cash-flow
-            pressure across the current universe.
+            Point-in-time investment and
+            cash-flow pressure across the
+            current universe.
           </p>
         </div>
 
         {data && (
           <div className="metadata">
             <span>
-              Vintage: {data.snapshot_vintage}
+              Vintage:{' '}
+              {data.snapshot_vintage}
             </span>
 
             <span>
               Confirmation:{' '}
-              {data.confirmation.required_hits} of{' '}
-              {data.confirmation.window_quarters}
+              {
+                data.confirmation
+                  .required_hits
+              }{' '}
+              of{' '}
+              {
+                data.confirmation
+                  .window_quarters
+              }
             </span>
           </div>
         )}
@@ -309,10 +443,20 @@ function App() {
         vintage={vintage}
         classifier={classifier}
         loading={loading}
-        onTickerInputChange={setTickerInput}
+        onTickerInputChange={
+          setTickerInput
+        }
         onVintageChange={setVintage}
-        onClassifierChange={setClassifier}
+        onClassifierChange={
+          setClassifier
+        }
         onSubmit={handleSubmit}
+      />
+
+      <PipelineStatusCard
+        data={pipelineStatus}
+        loading={pipelineStatusLoading}
+        error={pipelineStatusError}
       />
 
       {error && (
@@ -337,7 +481,9 @@ function App() {
         >
           <div className="card-header">
             <div>
-              <h2>Universe snapshot</h2>
+              <h2>
+                Universe snapshot
+              </h2>
 
               <p>
                 Classifier:{' '}
@@ -346,24 +492,31 @@ function App() {
             </div>
 
             <span className="company-count">
-              {classifierResult.companies.length}{' '}
+              {
+                classifierResult
+                  .companies.length
+              }{' '}
               companies
             </span>
           </div>
 
-          {classifierResult.companies.length >
-          0 ? (
+          {classifierResult.companies
+            .length > 0 ? (
             <UniverseTable
               companies={
                 classifierResult.companies
               }
-              selectedTicker={selectedTicker}
-              onSelectTicker={setSelectedTicker}
+              selectedTicker={
+                selectedTicker
+              }
+              onSelectTicker={
+                setSelectedTicker
+              }
             />
           ) : (
             <div className="empty-message">
-              No companies with complete signal
-              data were returned.
+              No companies with complete
+              signal data were returned.
             </div>
           )}
         </section>
@@ -373,15 +526,18 @@ function App() {
         <CompanyHistory
           ticker={selectedTicker}
           classifier={
-            historyClassifier?.classifier ??
+            historyClassifier
+              ?.classifier ??
             appliedFilters.classifier
           }
           vintage={
-            historyData?.snapshot_vintage ??
+            historyData
+              ?.snapshot_vintage ??
             appliedFilters.vintage
           }
           periods={
-            historyClassifier?.periods ?? []
+            historyClassifier?.periods ??
+            []
           }
           loading={historyLoading}
           error={historyError}

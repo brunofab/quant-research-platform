@@ -952,3 +952,247 @@ tbody tr:last-child td {
   background: #1c2940;
   box-shadow: inset 3px 0 0 #9fc5ff;
 }
+
+.pipeline-status-card {
+  margin-bottom: 26px;
+  overflow: hidden;
+  border: 1px solid #283244;
+  border-radius: 14px;
+  background: #111721;
+  box-shadow:
+    0 14px 38px rgba(0, 0, 0, 0.16);
+}
+
+.pipeline-status-card-succeeded {
+  border-color: #2e5948;
+}
+
+.pipeline-status-card-running {
+  border-color: #415d89;
+}
+
+.pipeline-status-card-partial {
+  border-color: #755e2d;
+}
+
+.pipeline-status-card-failed,
+.pipeline-status-card-error {
+  border-color: #753b43;
+}
+
+.pipeline-status-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 19px 21px 17px;
+  border-bottom: 1px solid #283244;
+}
+
+.pipeline-status-eyebrow {
+  margin: 0 0 5px;
+  color: #8491aa;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pipeline-status-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pipeline-status-title-row h2,
+.pipeline-status-card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.pipeline-status-description {
+  margin: 7px 0 0;
+  color: #8c97ab;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.pipeline-status-badge {
+  padding: 4px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pipeline-status-succeeded {
+  border-color: #39735a;
+  color: #8be0b0;
+  background: #142a20;
+}
+
+.pipeline-status-running {
+  border-color: #45699c;
+  color: #9fc5ff;
+  background: #17243a;
+}
+
+.pipeline-status-partial {
+  border-color: #806526;
+  color: #e7bd5d;
+  background: #2b2414;
+}
+
+.pipeline-status-failed {
+  border-color: #87434c;
+  color: #ff9da8;
+  background: #31191d;
+}
+
+.pipeline-run-id {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid #303a4e;
+  border-radius: 999px;
+  color: #96a2b8;
+  background: #151c27;
+  font-size: 0.7rem;
+}
+
+.pipeline-status-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    4,
+    minmax(0, 1fr)
+  );
+}
+
+.pipeline-status-metric {
+  min-width: 0;
+  padding: 16px 20px;
+  border-right: 1px solid #283244;
+}
+
+.pipeline-status-metric:last-child {
+  border-right: 0;
+}
+
+.pipeline-status-metric span,
+.pipeline-status-metric strong {
+  display: block;
+}
+
+.pipeline-status-metric span {
+  margin-bottom: 7px;
+  color: #818da3;
+  font-size: 0.68rem;
+}
+
+.pipeline-status-metric strong {
+  overflow: hidden;
+  color: #edf1f8;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-status-warning {
+  padding: 12px 20px;
+  border-top: 1px solid #755e2d;
+  color: #d7b968;
+  background: #241f14;
+  font-size: 0.74rem;
+}
+
+.pipeline-error-details {
+  padding: 12px 20px;
+  border-top: 1px solid #753b43;
+  color: #ff9da8;
+  background: #241417;
+  font-size: 0.74rem;
+}
+
+.pipeline-error-details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.pipeline-error-details pre {
+  margin: 12px 0 0;
+  overflow-x: auto;
+  color: #d9a1a8;
+  font-family: inherit;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.pipeline-status-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  color: #a6b0c1;
+  font-size: 0.78rem;
+}
+
+.pipeline-status-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #334057;
+  border-top-color: #9fc5ff;
+  border-radius: 50%;
+  animation: pipeline-spin 700ms linear infinite;
+}
+
+.pipeline-status-error-text {
+  margin: 8px 0 0;
+  color: #e8959f;
+  font-size: 0.76rem;
+}
+
+@keyframes pipeline-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .pipeline-status-grid {
+    grid-template-columns: repeat(
+      2,
+      minmax(0, 1fr)
+    );
+  }
+
+  .pipeline-status-metric:nth-child(2) {
+    border-right: 0;
+  }
+
+  .pipeline-status-metric:nth-child(-n + 2) {
+    border-bottom: 1px solid #283244;
+  }
+}
+
+@media (max-width: 560px) {
+  .pipeline-status-header {
+    flex-direction: column;
+  }
+
+  .pipeline-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pipeline-status-metric {
+    border-right: 0;
+    border-bottom: 1px solid #283244;
+  }
+
+  .pipeline-status-metric:last-child {
+    border-bottom: 0;
+  }
+}
