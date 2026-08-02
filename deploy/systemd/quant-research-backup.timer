@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Quant Research PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 Europe/Vienna
+Persistent=true
+AccuracySec=1min
+Unit=quant-research-backup.service
+
+[Install]
+WantedBy=timers.target
