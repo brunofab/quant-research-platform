@@ -17,3 +17,6 @@ data/processed/
 # Editors
 .vscode/
 .idea/
+
+# Python package metadata
+*.egg-info/
