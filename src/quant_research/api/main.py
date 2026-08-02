@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from quant_research.database.connection import (
     create_database_engine,
 )
+from quant_research.database.models import PipelineRun
 from quant_research.signals.capital_cycle_features import (
     SnapshotVintage,
 )
@@ -90,6 +91,38 @@ def resolve_threshold_profiles(
     return [
         THRESHOLD_PROFILES[classifier]
     ]
+
+
+def serialize_pipeline_run(
+    pipeline_run: PipelineRun | None,
+) -> dict[str, object] | None:
+    """Convert one pipeline run to an API response."""
+
+    if pipeline_run is None:
+        return None
+
+    return {
+        "id": pipeline_run.id,
+        "run_type": pipeline_run.run_type,
+        "status": pipeline_run.status,
+        "started_at": pipeline_run.started_at,
+        "finished_at": pipeline_run.finished_at,
+        "companies_total": (
+            pipeline_run.companies_total
+        ),
+        "companies_succeeded": (
+            pipeline_run.companies_succeeded
+        ),
+        "companies_failed": (
+            pipeline_run.companies_failed
+        ),
+        "records_inserted": (
+            pipeline_run.records_inserted
+        ),
+        "error_message": (
+            pipeline_run.error_message
+        ),
+    }
 
 
 @app.get("/health")
@@ -249,3 +282,51 @@ def capital_cycle_history(
             status_code=status_code,
             detail=message,
         ) from error
+    
+
+@app.get("/api/v1/pipeline/status")
+def pipeline_status(
+    session: Annotated[
+        Session,
+        Depends(get_session),
+    ],
+) -> dict[str, object]:
+    """Return the latest pipeline refresh status."""
+
+    latest_run = session.scalar(
+        select(PipelineRun)
+        .where(
+            PipelineRun.run_type == "refresh"
+        )
+        .order_by(
+            PipelineRun.started_at.desc(),
+            PipelineRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+    last_successful_run = session.scalar(
+        select(PipelineRun)
+        .where(
+            PipelineRun.run_type == "refresh",
+            PipelineRun.status == "succeeded",
+        )
+        .order_by(
+            PipelineRun.finished_at.desc(),
+            PipelineRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return {
+        "pipeline": "refresh",
+        "has_run": latest_run is not None,
+        "latest_run": serialize_pipeline_run(
+            latest_run
+        ),
+        "last_successful_run": (
+            serialize_pipeline_run(
+                last_successful_run
+            )
+        ),
+    }
