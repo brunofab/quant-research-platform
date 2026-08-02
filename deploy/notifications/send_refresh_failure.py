@@ -238,6 +238,26 @@ def send_email(
         smtp.send_message(message)
 
 
+def service_label(
+    service_unit: str,
+) -> str:
+    """Return a readable component label."""
+
+    labels = {
+        "quant-research-refresh.service": (
+            "Data refresh"
+        ),
+        "quant-research-backup.service": (
+            "PostgreSQL backup and restore validation"
+        ),
+    }
+
+    return labels.get(
+        service_unit,
+        service_unit,
+    )
+
+
 def build_failure_message(
     service_unit: str,
 ) -> tuple[str, str]:
@@ -250,8 +270,12 @@ def build_failure_message(
         "[Quant Research]",
     ).strip()
 
+    component = service_label(
+        service_unit
+    )
+
     subject = (
-        f"{subject_prefix} Refresh failed "
+        f"{subject_prefix} {component} failed "
         f"on {hostname}"
     )
 
@@ -259,8 +283,9 @@ def build_failure_message(
         UTC
     ).isoformat()
 
-    body = f"""Quant Research Platform refresh failed.
+    body = f"""Quant Research Platform failure detected.
 
+Component: {component}
 Host: {hostname}
 Service: {service_unit}
 Detected at: {timestamp}
@@ -278,7 +303,8 @@ Suggested checks
 1. systemctl status {service_unit}
 2. journalctl -u {service_unit} -n 200 --no-pager
 3. docker compose ps
-4. Check the latest pipeline_runs database record
+4. Check the newest backup and checksum files
+5. Check whether the temporary restore database remains
 """
 
     return subject, body

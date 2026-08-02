@@ -1,8 +1,9 @@
 [Unit]
-Description=Quant Research PostgreSQL backup
+Description=Quant Research PostgreSQL backup and restore validation
 Wants=network-online.target
-After=network-online.target docker.service
+After=network-online.target docker.service quant-research-refresh.service
 Requires=docker.service
+OnFailure=quant-research-backup-notify.service
 
 [Service]
 Type=oneshot
@@ -11,6 +12,8 @@ Group=bruno
 WorkingDirectory=/home/bruno/apps/quant-research-platform
 
 ExecStart=/usr/bin/python3 /home/bruno/apps/quant-research-platform/deploy/backups/backup_postgres.py --project-dir /home/bruno/apps/quant-research-platform --backup-dir /var/backups/quant-research/postgres --database quant_research --database-user quant_user --compose-service db --retention-count 14
+
+ExecStart=/usr/bin/python3 /home/bruno/apps/quant-research-platform/deploy/backups/test_postgres_restore.py --project-dir /home/bruno/apps/quant-research-platform --backup-dir /var/backups/quant-research/postgres --production-database quant_research --test-database quant_research_restore_test --database-user quant_user --compose-service db
 
 TimeoutStartSec=2h
 Nice=10
