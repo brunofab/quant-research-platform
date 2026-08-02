@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useState,
 } from 'react'
@@ -63,8 +62,10 @@ function App() {
 
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const loadOverview = useCallback(
-    async (signal: AbortSignal) => {
+  useEffect(() => {
+    const controller = new AbortController()
+
+    const loadOverview = async () => {
       setLoading(true)
       setError(null)
 
@@ -91,7 +92,7 @@ function App() {
         const response = await fetch(
           `/api/v1/capital-cycle/overview?${parameters}`,
           {
-            signal,
+            signal: controller.signal,
           },
         )
 
@@ -134,23 +135,18 @@ function App() {
             : 'Unknown API error',
         )
       } finally {
-        if (!signal.aborted) {
+        if (!controller.signal.aborted) {
           setLoading(false)
         }
       }
-    },
-    [appliedFilters, refreshKey],
-  )
+    }
 
-  useEffect(() => {
-    const controller = new AbortController()
-
-    void loadOverview(controller.signal)
+    void loadOverview()
 
     return () => {
       controller.abort()
     }
-  }, [loadOverview])
+  }, [appliedFilters, refreshKey])
 
   const handleSubmit = (
     event: FormEvent<HTMLFormElement>,
