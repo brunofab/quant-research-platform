@@ -87,6 +87,26 @@ services:
     networks:
       - backend
 
+    dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    environment:
+      DASHBOARD_USER: ${DASHBOARD_USER}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH}
+
+    depends_on:
+      - api
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    networks:
+      - backend
+
 volumes:
   postgres_data:
 
