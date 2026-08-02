@@ -175,9 +175,23 @@ function CompanyHistory({
                       }
                       className={
                         isSelected
-                          ? 'selected-row'
-                          : undefined
+                          ? 'history-row selected-row'
+                          : 'history-row'
                       }
+                      tabIndex={0}
+                      aria-selected={isSelected}
+                      onClick={() => {
+                        setSelectedPeriodIndex(index)
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' ||
+                          event.key === ' '
+                        ) {
+                          event.preventDefault()
+                          setSelectedPeriodIndex(index)
+                        }
+                      }}
                     >
                       <td>
                         {period.fiscal_period ?? '—'}
