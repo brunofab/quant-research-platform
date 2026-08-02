@@ -260,6 +260,8 @@ def main() -> int:
         command=[
             arguments.restic_binary,
             "forget",
+            "--group-by",
+            "host,tags",
             "--host",
             arguments.host,
             "--tag",
