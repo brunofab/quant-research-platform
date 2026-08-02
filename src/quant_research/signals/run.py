@@ -1,4 +1,5 @@
 import argparse
+import json
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -678,6 +679,133 @@ def print_confirmation_comparison(
 
 
 
+
+def percentage_points_number(
+    value: Decimal,
+) -> float:
+    """Convert a ratio into a JSON-compatible percentage-point number."""
+
+    return float(value * Decimal(100))
+
+
+def build_universe_company_payload(
+    company_series: CompanySignalSeries,
+) -> dict[str, object]:
+    """Build one structured universe-overview company row."""
+
+    if not company_series.confirmed_signals:
+        return {
+            "ticker": company_series.ticker,
+            "status": "no_data",
+        }
+
+    signal = company_series.confirmed_signals[-1]
+    snapshot = signal.snapshot
+
+    return {
+        "ticker": company_series.ticker,
+        "status": "ok",
+        "fiscal_period": (
+            f"FY{snapshot.fiscal_year} "
+            f"Q{snapshot.fiscal_quarter}"
+        ),
+        "fiscal_year": snapshot.fiscal_year,
+        "fiscal_quarter": snapshot.fiscal_quarter,
+        "as_of": snapshot.as_of.isoformat(),
+        "confirmed_regime": signal.regime.value,
+        "raw_regime": signal.raw_regime.value,
+        "candidate_regime": (
+            signal.candidate_regime.value
+            if signal.candidate_regime is not None
+            else None
+        ),
+        "candidate_hits": signal.candidate_hits,
+        "confirmation_required": signal.confirmation_required,
+        "confirmation_pending": signal.confirmation_pending,
+        "confirmation_progress": (
+            f"{signal.candidate_hits}/"
+            f"{signal.confirmation_required}"
+            if signal.confirmation_pending
+            else None
+        ),
+        "changed_this_period": signal.changed_this_period,
+        "features_percentage_points": {
+            "capex_growth_gap": percentage_points_number(
+                snapshot.capex_growth_gap
+            ),
+            "capex_intensity_yoy_delta": percentage_points_number(
+                snapshot.capex_intensity_yoy_delta
+            ),
+            "fcf_margin_yoy_delta": percentage_points_number(
+                snapshot.fcf_margin_yoy_delta
+            ),
+            "capex_growth_gap_qoq_delta": percentage_points_number(
+                snapshot.capex_growth_gap_qoq_delta
+            ),
+            "capex_intensity_yoy_delta_qoq_delta": (
+                percentage_points_number(
+                    snapshot.capex_intensity_yoy_delta_qoq_delta
+                )
+            ),
+            "fcf_margin_yoy_delta_qoq_delta": (
+                percentage_points_number(
+                    snapshot.fcf_margin_yoy_delta_qoq_delta
+                )
+            ),
+        },
+    }
+
+
+def build_universe_classifier_payload(
+    series: list[CompanySignalSeries],
+    thresholds: CapitalCycleThresholds,
+) -> dict[str, object]:
+    """Build structured overview output for one classifier profile."""
+
+    return {
+        "classifier": thresholds.name,
+        "companies": [
+            build_universe_company_payload(company_series)
+            for company_series in series
+        ],
+    }
+
+
+def print_universe_overview_json(
+    classifier_payloads: list[dict[str, object]],
+    requested_as_of: date | None,
+    vintage: SnapshotVintage,
+    confirmation_required: int,
+    confirmation_window: int,
+) -> None:
+    """Print one valid JSON document for the complete universe overview."""
+
+    payload = {
+        "schema_version": 1,
+        "requested_as_of": (
+            requested_as_of.isoformat()
+            if requested_as_of is not None
+            else None
+        ),
+        "snapshot_vintage": vintage.value,
+        "units": {
+            "features": "percentage_points",
+        },
+        "confirmation": {
+            "required_hits": confirmation_required,
+            "window_quarters": confirmation_window,
+        },
+        "classifiers": classifier_payloads,
+    }
+
+    print(
+        json.dumps(
+            payload,
+            indent=2,
+        )
+    )
+
+
 def print_universe_overview(
     series: list[CompanySignalSeries],
     requested_as_of: date | None,
@@ -751,7 +879,7 @@ def print_universe_overview(
         snapshot = signal.snapshot
 
         fiscal_period = (
-            f"FY{snapshot.fiscal_year}"
+            f"FY{snapshot.fiscal_year} "
             f"Q{snapshot.fiscal_quarter}"
         )
 
@@ -824,6 +952,19 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Show one latest dashboard-style row per company."
+        ),
+    )
+
+    parser.add_argument(
+        "--format",
+        choices=(
+            "table",
+            "json",
+        ),
+        default="table",
+        help=(
+            "Output format for overview mode. "
+            "Default: table."
         ),
     )
 
@@ -950,6 +1091,11 @@ def parse_args() -> argparse.Namespace:
             "--diagnostics-only."
         )
 
+    if args.format == "json" and not args.overview:
+        parser.error(
+            "--format json currently requires --overview."
+        )
+
     return args
 
 
@@ -1065,6 +1211,49 @@ def main() -> None:
             )
             for ticker in tickers
         ]
+
+        if args.overview and args.format == "json":
+            classifier_payloads: list[
+                dict[str, object]
+            ] = []
+
+            for thresholds in threshold_profiles:
+                company_series = [
+                    build_company_signal_series(
+                        session=session,
+                        company=company,
+                        vintage=vintage,
+                        as_of=args.as_of,
+                        thresholds=thresholds,
+                        confirmation_hits=(
+                            args.confirmation_hits
+                        ),
+                        confirmation_window=(
+                            args.confirmation_window
+                        ),
+                    )
+                    for company in companies
+                ]
+
+                classifier_payloads.append(
+                    build_universe_classifier_payload(
+                        series=company_series,
+                        thresholds=thresholds,
+                    )
+                )
+
+            print_universe_overview_json(
+                classifier_payloads=classifier_payloads,
+                requested_as_of=args.as_of,
+                vintage=vintage,
+                confirmation_required=(
+                    args.confirmation_hits
+                ),
+                confirmation_window=(
+                    args.confirmation_window
+                ),
+            )
+            return
 
         for thresholds in threshold_profiles:
             company_series = [
