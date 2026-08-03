@@ -4,6 +4,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from itertools import pairwise
+from statistics import median
 
 from sqlalchemy import select
 
@@ -14,6 +16,7 @@ from quant_research.data_quality.core import (
     RegisteredQualityCheck,
 )
 from quant_research.database.models import (
+    Filing,
     FiscalPeriod,
     NormalizedFinancial,
     NormalizedFinancialDependency,
@@ -31,6 +34,18 @@ REQUIRED_METRICS = (
 )
 
 FCF_TOLERANCE = Decimal(1)
+
+PERIODIC_FORMS = (
+    "10-K",
+    "10-K/A",
+    "10-Q",
+    "10-Q/A",
+)
+
+SOURCE_FRESHNESS_HISTORY_LIMIT = 8
+SOURCE_FRESHNESS_MINIMUM_DAYS = 130
+SOURCE_FRESHNESS_GRACE_DAYS = 30
+SOURCE_FRESHNESS_MAXIMUM_DAYS = 180
 
 
 @dataclass(frozen=True)
@@ -86,6 +101,28 @@ class FinancialObservation:
             self.metric,
             self.fiscal_year,
             self.fiscal_quarter,
+        )
+
+
+@dataclass(frozen=True)
+class SourceFilingObservation:
+    """Authoritative filing associated with one fiscal period."""
+
+    filing_id: int
+    form: str
+    filing_date: date
+    fiscal_year: int
+    fiscal_quarter: int
+    period_start: date | None
+    period_end: date
+
+    @property
+    def label(self) -> str:
+        """Return a readable fiscal-period label."""
+
+        return (
+            f"FY{self.fiscal_year} "
+            f"Q{self.fiscal_quarter}"
         )
 
 
@@ -252,6 +289,105 @@ def latest_observations(
         if observation.available_at
         == latest_date
     ]
+
+
+def load_recent_source_filings(
+    context: QualityCheckContext,
+) -> list[SourceFilingObservation]:
+    """Load recent authoritative fiscal-period filings."""
+
+    statement = (
+        select(
+            Filing.id.label("filing_id"),
+            Filing.form,
+            Filing.filing_date,
+            FiscalPeriod.fiscal_year,
+            FiscalPeriod.fiscal_quarter,
+            FiscalPeriod.period_start,
+            FiscalPeriod.period_end,
+        )
+        .join(
+            Filing,
+            Filing.id
+            == FiscalPeriod.source_filing_id,
+        )
+        .where(
+            FiscalPeriod.company_id
+            == context.company_id,
+            Filing.form.in_(PERIODIC_FORMS),
+        )
+        .order_by(
+            FiscalPeriod.period_end.desc(),
+            Filing.filing_date.desc(),
+            Filing.id.desc(),
+        )
+        .limit(
+            SOURCE_FRESHNESS_HISTORY_LIMIT
+        )
+    )
+
+    return [
+        SourceFilingObservation(
+            filing_id=row.filing_id,
+            form=row.form,
+            filing_date=row.filing_date,
+            fiscal_year=row.fiscal_year,
+            fiscal_quarter=row.fiscal_quarter,
+            period_start=row.period_start,
+            period_end=row.period_end,
+        )
+        for row in context.session.execute(
+            statement
+        )
+    ]
+
+
+def filing_intervals_in_days(
+    filings: list[SourceFilingObservation],
+) -> list[int]:
+    """Calculate positive intervals between filing dates."""
+
+    filing_dates = sorted(
+        {
+            filing.filing_date
+            for filing in filings
+        }
+    )
+    return [
+        (current_date - previous_date).days
+        for previous_date, current_date
+        in pairwise(filing_dates)
+        if current_date > previous_date
+    ]
+
+
+def source_freshness_threshold_days(
+    intervals: list[int],
+) -> tuple[int, int | None]:
+    """Resolve a robust filing-age warning threshold."""
+
+    if not intervals:
+        return (
+            SOURCE_FRESHNESS_MINIMUM_DAYS,
+            None,
+        )
+
+    typical_interval = int(
+        median(intervals)
+    )
+
+    threshold = max(
+        SOURCE_FRESHNESS_MINIMUM_DAYS,
+        typical_interval
+        + SOURCE_FRESHNESS_GRACE_DAYS,
+    )
+
+    threshold = min(
+        threshold,
+        SOURCE_FRESHNESS_MAXIMUM_DAYS,
+    )
+
+    return threshold, typical_interval
 
 
 def canonical_latest_observation(
@@ -1482,6 +1618,203 @@ def latest_period_freshness(
     )
 
 
+def latest_source_freshness(
+    context: QualityCheckContext,
+) -> QualityCheckResult:
+    """Check the age of the latest authoritative filing."""
+
+    observed_at = datetime.now(UTC)
+
+    filings = load_recent_source_filings(
+        context
+    )
+
+    if not filings:
+        issue = QualityIssueDraft(
+            company_id=context.company_id,
+            entity_type="company",
+            entity_key=context.ticker,
+            dataset=DATASET,
+            metric=None,
+            check_name=(
+                "latest_source_freshness"
+            ),
+            severity="warning",
+            blocking=False,
+            observed_at=observed_at,
+            actual_value=(
+                "No authoritative periodic "
+                "filing available"
+            ),
+            expected_value=(
+                "At least one 10-Q or 10-K "
+                "linked to a fiscal period"
+            ),
+            message=(
+                f"{context.ticker} has no "
+                "authoritative periodic filing "
+                "available for source-freshness "
+                "validation."
+            ),
+            context_json={
+                "history_limit": (
+                    SOURCE_FRESHNESS_HISTORY_LIMIT
+                ),
+                "periodic_forms": list(
+                    PERIODIC_FORMS
+                ),
+            },
+        )
+
+        return QualityCheckResult(
+            check_name=(
+                "latest_source_freshness"
+            ),
+            records_checked=1,
+            issues=(issue,),
+        )
+
+    latest_filing = filings[0]
+
+    intervals = filing_intervals_in_days(
+        filings
+    )
+
+    (
+        warning_threshold_days,
+        typical_interval_days,
+    ) = source_freshness_threshold_days(
+        intervals
+    )
+
+    filing_age_days = (
+        observed_at.date()
+        - latest_filing.filing_date
+    ).days
+
+    if (
+        0
+        <= filing_age_days
+        <= warning_threshold_days
+    ):
+        return QualityCheckResult(
+            check_name=(
+                "latest_source_freshness"
+            ),
+            records_checked=1,
+            issues=(),
+        )
+
+    if filing_age_days < 0:
+        severity = "error"
+
+        message = (
+            f"{context.ticker} latest "
+            f"authoritative filing "
+            f"{latest_filing.filing_id} has a "
+            "filing date in the future."
+        )
+
+    else:
+        severity = "warning"
+
+        message = (
+            f"{context.ticker} latest "
+            f"authoritative filing is "
+            f"{filing_age_days} days old, "
+            f"exceeding the adaptive "
+            f"{warning_threshold_days}-day "
+            "freshness threshold."
+        )
+
+    issue = QualityIssueDraft(
+        company_id=context.company_id,
+        entity_type="company",
+        entity_key=context.ticker,
+        dataset=DATASET,
+        metric=None,
+        check_name=(
+            "latest_source_freshness"
+        ),
+        severity=severity,
+        blocking=False,
+        period_start=(
+            latest_filing.period_start
+        ),
+        period_end=latest_filing.period_end,
+        observed_at=observed_at,
+        available_at=(
+            date_as_utc_datetime(
+                latest_filing.filing_date
+            )
+        ),
+        actual_value=(
+            f"{filing_age_days} days since "
+            "latest filing"
+        ),
+        expected_value=(
+            "No more than "
+            f"{warning_threshold_days} days"
+        ),
+        message=message,
+        context_json={
+            "filing_id": (
+                latest_filing.filing_id
+            ),
+            "form": latest_filing.form,
+            "filing_date": (
+                latest_filing.filing_date
+                .isoformat()
+            ),
+            "fiscal_year": (
+                latest_filing.fiscal_year
+            ),
+            "fiscal_quarter": (
+                latest_filing.fiscal_quarter
+            ),
+            "fiscal_period": (
+                latest_filing.label
+            ),
+            "period_end": (
+                latest_filing.period_end
+                .isoformat()
+            ),
+            "filing_age_days": (
+                filing_age_days
+            ),
+            "warning_threshold_days": (
+                warning_threshold_days
+            ),
+            "typical_interval_days": (
+                typical_interval_days
+            ),
+            "observed_intervals_days": (
+                intervals
+            ),
+            "history_limit": (
+                SOURCE_FRESHNESS_HISTORY_LIMIT
+            ),
+            "minimum_threshold_days": (
+                SOURCE_FRESHNESS_MINIMUM_DAYS
+            ),
+            "grace_days": (
+                SOURCE_FRESHNESS_GRACE_DAYS
+            ),
+            "maximum_threshold_days": (
+                SOURCE_FRESHNESS_MAXIMUM_DAYS
+            ),
+        },
+    )
+
+    return QualityCheckResult(
+        check_name=(
+            "latest_source_freshness"
+        ),
+        records_checked=1,
+        issues=(issue,),
+    )
+
+
 NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="missing_required_metrics",
@@ -1506,5 +1839,9 @@ NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="latest_period_freshness",
         run=latest_period_freshness,
+    ),
+    RegisteredQualityCheck(
+        name="latest_source_freshness",
+        run=latest_source_freshness,
     ),
 )
