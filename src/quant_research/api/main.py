@@ -3,8 +3,14 @@ from datetime import date
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import select, text
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Path,
+    Query,
+)
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -13,6 +19,7 @@ from quant_research.database.connection import (
     create_database_engine,
 )
 from quant_research.database.models import (
+    DataQualityIssue,
     DataQualityRun,
     PipelineRun,
 )
@@ -39,6 +46,13 @@ ClassifierName = Literal[
 VintageName = Literal[
     "first",
     "latest",
+]
+
+DataQualitySeverity = Literal[
+    "info",
+    "warning",
+    "error",
+    "critical",
 ]
 
 app = FastAPI(
@@ -163,6 +177,36 @@ def serialize_data_quality_run(
         "error_message": (
             quality_run.error_message
         ),
+    }
+
+
+def serialize_data_quality_issue(
+    issue: DataQualityIssue,
+) -> dict[str, object]:
+    """Convert one data-quality issue to an API response."""
+
+    return {
+        "id": issue.id,
+        "data_quality_run_id": (
+            issue.data_quality_run_id
+        ),
+        "company_id": issue.company_id,
+        "entity_type": issue.entity_type,
+        "entity_key": issue.entity_key,
+        "dataset": issue.dataset,
+        "metric": issue.metric,
+        "check_name": issue.check_name,
+        "severity": issue.severity,
+        "blocking": issue.blocking,
+        "period_start": issue.period_start,
+        "period_end": issue.period_end,
+        "observed_at": issue.observed_at,
+        "available_at": issue.available_at,
+        "actual_value": issue.actual_value,
+        "expected_value": issue.expected_value,
+        "message": issue.message,
+        "context_json": issue.context_json,
+        "created_at": issue.created_at,
     }
 
 
@@ -395,4 +439,140 @@ def pipeline_status(
                 latest_quality_run
             )
         ),
+    }
+
+
+@app.get(
+    "/api/v1/data-quality/runs/{run_id}/issues"
+)
+def data_quality_run_issues(
+    run_id: Annotated[
+        int,
+        Path(ge=1),
+    ],
+    session: Annotated[
+        Session,
+        Depends(get_session),
+    ],
+    severity: DataQualitySeverity | None = None,
+    check_name: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional exact data-quality "
+                "check name."
+            )
+        ),
+    ] = None,
+    ticker: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional company ticker."
+            )
+        ),
+    ] = None,
+    blocking_only: bool = False,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=1000),
+    ] = 200,
+) -> dict[str, object]:
+    """Return issues belonging to one quality run."""
+
+    quality_run = session.get(
+        DataQualityRun,
+        run_id,
+    )
+
+    if quality_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Unknown data-quality run "
+                f"{run_id}."
+            ),
+        )
+
+    conditions = [
+        DataQualityIssue.data_quality_run_id
+        == run_id
+    ]
+
+    if severity is not None:
+        conditions.append(
+            DataQualityIssue.severity
+            == severity
+        )
+
+    normalized_check_name = (
+        check_name.strip()
+        if check_name
+        else None
+    )
+
+    if normalized_check_name:
+        conditions.append(
+            DataQualityIssue.check_name
+            == normalized_check_name
+        )
+
+    normalized_ticker = (
+        ticker.strip().upper()
+        if ticker
+        else None
+    )
+
+    if normalized_ticker:
+        conditions.append(
+            DataQualityIssue.entity_key
+            == normalized_ticker
+        )
+
+    if blocking_only:
+        conditions.append(
+            DataQualityIssue.blocking.is_(True)
+        )
+
+    total_issues = session.scalar(
+        select(
+            func.count(
+                DataQualityIssue.id
+            )
+        ).where(*conditions)
+    )
+
+    issues = list(
+        session.scalars(
+            select(DataQualityIssue)
+            .where(*conditions)
+            .order_by(
+                DataQualityIssue.blocking.desc(),
+                DataQualityIssue.id.asc(),
+            )
+            .limit(limit)
+        )
+    )
+
+    return {
+        "run": serialize_data_quality_run(
+            quality_run
+        ),
+        "filters": {
+            "severity": severity,
+            "check_name": (
+                normalized_check_name
+            ),
+            "ticker": normalized_ticker,
+            "blocking_only": blocking_only,
+            "limit": limit,
+        },
+        "total_issues": total_issues or 0,
+        "returned_issues": len(issues),
+        "issues": [
+            serialize_data_quality_issue(
+                issue
+            )
+            for issue in issues
+        ],
     }
