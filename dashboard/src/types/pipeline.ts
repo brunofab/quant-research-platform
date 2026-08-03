@@ -40,6 +40,48 @@ export type DataQualityRun = {
   error_message: string | null
 }
 
+export type DataQualitySeverity =
+  | 'info'
+  | 'warning'
+  | 'error'
+  | 'critical'
+
+export type DataQualityIssue = {
+  id: number
+  data_quality_run_id: number
+  company_id: number | null
+  entity_type: string
+  entity_key: string
+  dataset: string
+  metric: string | null
+  check_name: string
+  severity: DataQualitySeverity
+  blocking: boolean
+  period_start: string | null
+  period_end: string | null
+  observed_at: string | null
+  available_at: string | null
+  actual_value: string | null
+  expected_value: string | null
+  message: string
+  context_json: Record<string, unknown> | null
+  created_at: string
+}
+
+export type DataQualityIssuesResponse = {
+  run: DataQualityRun
+  filters: {
+    severity: DataQualitySeverity | null
+    check_name: string | null
+    ticker: string | null
+    blocking_only: boolean
+    limit: number
+  }
+  total_issues: number
+  returned_issues: number
+  issues: DataQualityIssue[]
+}
+
 export type PipelineStatusResponse = {
   pipeline: string
   has_run: boolean

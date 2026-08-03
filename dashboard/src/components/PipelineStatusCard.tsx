@@ -1,3 +1,4 @@
+import DataQualityIssuesPanel from './DataQualityIssuesPanel'
 import type {
   DataQualityRunStatus,
   PipelineRun,
@@ -366,6 +367,13 @@ function PipelineStatusCard({
                 </strong>
               </div>
             </div>
+
+            {qualityRun.issues_found > 0 && (
+              <DataQualityIssuesPanel
+                runId={qualityRun.id}
+                totalIssues={qualityRun.issues_found}
+              />
+            )}
 
             {qualityRun.error_message && (
               <details className="data-quality-error-details">
