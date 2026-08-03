@@ -1003,6 +1003,211 @@ def lineage_completeness(
         issues=tuple(issues),
     )
 
+def fiscal_period_consistency(
+    context: QualityCheckContext,
+) -> QualityCheckResult:
+    """Verify normalized dates against fiscal periods."""
+
+    periods = load_recent_periods(context)
+
+    period_by_key = {
+        period.key: period
+        for period in periods
+    }
+
+    observations = (
+        load_latest_required_observations(
+            context
+        )
+    )
+
+    issues: list[
+        QualityIssueDraft
+    ] = []
+
+    for observation in observations:
+        fiscal_period = period_by_key.get(
+            (
+                observation.fiscal_year,
+                observation.fiscal_quarter,
+            )
+        )
+
+        if fiscal_period is None:
+            issues.append(
+                QualityIssueDraft(
+                    company_id=context.company_id,
+                    entity_type="company",
+                    entity_key=context.ticker,
+                    dataset=DATASET,
+                    metric=observation.metric,
+                    check_name=(
+                        "fiscal_period_consistency"
+                    ),
+                    severity="error",
+                    blocking=False,
+                    period_start=(
+                        observation.period_start
+                    ),
+                    period_end=(
+                        observation.period_end
+                    ),
+                    available_at=(
+                        date_as_utc_datetime(
+                            observation.available_at
+                        )
+                    ),
+                    actual_value=(
+                        "Normalized financial exists "
+                        "without a matching fiscal "
+                        "period"
+                    ),
+                    expected_value=(
+                        "Matching fiscal_periods row"
+                    ),
+                    message=(
+                        f"{context.ticker} "
+                        f"FY{observation.fiscal_year} "
+                        f"Q{observation.fiscal_quarter} "
+                        f"{observation.metric} has no "
+                        "matching fiscal-period record."
+                    ),
+                    context_json={
+                        "normalized_financial_id": (
+                            observation.id
+                        ),
+                        "fiscal_year": (
+                            observation.fiscal_year
+                        ),
+                        "fiscal_quarter": (
+                            observation.fiscal_quarter
+                        ),
+                        "normalized_period_start": (
+                            observation.period_start
+                            .isoformat()
+                            if observation.period_start
+                            else None
+                        ),
+                        "normalized_period_end": (
+                            observation.period_end
+                            .isoformat()
+                        ),
+                    },
+                )
+            )
+
+            continue
+
+        start_matches = (
+            observation.period_start
+            == fiscal_period.period_start
+        )
+
+        end_matches = (
+            observation.period_end
+            == fiscal_period.period_end
+        )
+
+        if start_matches and end_matches:
+            continue
+
+        fiscal_label = (
+            f"FY{observation.fiscal_year} "
+            f"Q{observation.fiscal_quarter}"
+        )
+
+        normalized_start = (
+            observation.period_start.isoformat()
+            if observation.period_start
+            else None
+        )
+
+        expected_start = (
+            fiscal_period.period_start.isoformat()
+            if fiscal_period.period_start
+            else None
+        )
+
+        issues.append(
+            QualityIssueDraft(
+                company_id=context.company_id,
+                entity_type="company",
+                entity_key=context.ticker,
+                dataset=DATASET,
+                metric=observation.metric,
+                check_name=(
+                    "fiscal_period_consistency"
+                ),
+                severity="error",
+                blocking=False,
+                period_start=(
+                    observation.period_start
+                ),
+                period_end=observation.period_end,
+                available_at=(
+                    date_as_utc_datetime(
+                        observation.available_at
+                    )
+                ),
+                actual_value=(
+                    "period_start="
+                    f"{normalized_start}, "
+                    "period_end="
+                    f"{observation.period_end}"
+                ),
+                expected_value=(
+                    "period_start="
+                    f"{expected_start}, "
+                    "period_end="
+                    f"{fiscal_period.period_end}"
+                ),
+                message=(
+                    f"{context.ticker} "
+                    f"{fiscal_label} "
+                    f"{observation.metric} does not "
+                    "match the authoritative fiscal "
+                    "period."
+                ),
+                context_json={
+                    "normalized_financial_id": (
+                        observation.id
+                    ),
+                    "fiscal_year": (
+                        observation.fiscal_year
+                    ),
+                    "fiscal_quarter": (
+                        observation.fiscal_quarter
+                    ),
+                    "normalized_period_start": (
+                        normalized_start
+                    ),
+                    "expected_period_start": (
+                        expected_start
+                    ),
+                    "normalized_period_end": (
+                        observation.period_end
+                        .isoformat()
+                    ),
+                    "expected_period_end": (
+                        fiscal_period.period_end
+                        .isoformat()
+                    ),
+                    "start_matches": (
+                        start_matches
+                    ),
+                    "end_matches": end_matches,
+                },
+            )
+        )
+
+    return QualityCheckResult(
+        check_name=(
+            "fiscal_period_consistency"
+        ),
+        records_checked=len(observations),
+        issues=tuple(issues),
+    )
+
 
 NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
@@ -1020,5 +1225,9 @@ NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="lineage_completeness",
         run=lineage_completeness,
+    ),
+    RegisteredQualityCheck(
+        name="fiscal_period_consistency",
+        run=fiscal_period_consistency,
     ),
 )
