@@ -11,6 +11,9 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
+from quant_research.data_quality.runner import (
+    run_data_quality,
+)
 from quant_research.database.connection import (
     create_database_engine,
 )
@@ -34,6 +37,9 @@ from quant_research.signals.universe import (
 
 PIPELINE_LOCK_NAMESPACE = 1_726_001
 PIPELINE_LOCK_ID = 1
+
+DATA_QUALITY_DATASET = "normalized_financials"
+DATA_QUALITY_LOOKBACK_PERIODS = 12
 
 
 class PipelineAlreadyRunningError(RuntimeError):
@@ -587,6 +593,10 @@ def _refresh_companies_without_lock(
     companies_failed = 0
     records_inserted = 0
     errors: list[str] = []
+    successful_tickers: list[str] = []
+
+    data_quality_run_id: int | None = None
+    data_quality_status = "not_run"
 
     print(
         f"Pipeline run {run_id} started for "
@@ -660,9 +670,14 @@ def _refresh_companies_without_lock(
 
             if company_error is None:
                 companies_succeeded += 1
+                successful_tickers.append(
+                    company.ticker
+                )
+
                 print(
                     f"{company.ticker}: succeeded."
                 )
+
             else:
                 companies_failed += 1
 
@@ -677,6 +692,109 @@ def _refresh_companies_without_lock(
                     f"{company.ticker}: failed."
                 )
                 print(error_text)
+
+        if successful_tickers:
+            print()
+            print("=" * 72)
+            print("DATA QUALITY")
+            print("=" * 72)
+
+            quality_tickers: (
+                Sequence[str] | None
+            )
+
+            if (
+                requested_tickers is None
+                and len(successful_tickers)
+                == len(companies)
+            ):
+                quality_tickers = None
+            else:
+                quality_tickers = (
+                    successful_tickers
+                )
+
+            try:
+                quality_summary = run_data_quality(
+                    dataset=DATA_QUALITY_DATASET,
+                    requested_tickers=(
+                        quality_tickers
+                    ),
+                    pipeline_run_id=run_id,
+                    lookback_periods=(
+                        DATA_QUALITY_LOOKBACK_PERIODS
+                    ),
+                )
+
+                data_quality_run_id = (
+                    quality_summary.run_id
+                )
+                data_quality_status = (
+                    quality_summary.status
+                )
+
+                print()
+                print(
+                    "Pipeline data-quality result:"
+                )
+                print(
+                    "Run ID: "
+                    f"{data_quality_run_id}"
+                )
+                print(
+                    "Status: "
+                    f"{data_quality_status}"
+                )
+                print(
+                    "Records checked: "
+                    f"{quality_summary.records_checked}"
+                )
+                print(
+                    "Issues found: "
+                    f"{quality_summary.issues_found}"
+                )
+                print(
+                    "Blocking issues: "
+                    f"{quality_summary.blocking_issues}"
+                )
+
+                if (
+                    quality_summary.status
+                    == "failed"
+                ):
+                    print(
+                        "Data quality failed, but the "
+                        "pipeline remains non-blocking "
+                        "during the validation phase."
+                    )
+
+            # Data quality is deliberately non-blocking
+            # during the initial validation phase.
+            except Exception as quality_error:  # noqa: BLE001
+                data_quality_status = "failed"
+
+                print()
+                print(
+                    "Data-quality execution failed."
+                )
+                print(str(quality_error))
+                print(
+                    "The refresh pipeline remains "
+                    "non-blocking during the initial "
+                    "quality-validation phase."
+                )
+
+        else:
+            data_quality_status = "skipped"
+
+            print()
+            print("=" * 72)
+            print("DATA QUALITY")
+            print("=" * 72)
+            print(
+                "Skipped because no company refresh "
+                "completed successfully."
+            )
 
         status = determine_run_status(
             companies_succeeded=(
@@ -732,9 +850,20 @@ def _refresh_companies_without_lock(
         f"Companies failed: {companies_failed}"
     )
     print(
-        f"Business records inserted: "
+        "Business records inserted: "
         f"{records_inserted}"
     )
+    print(
+        "Data quality: "
+        f"{data_quality_status}"
+    )
+
+    if data_quality_run_id is not None:
+        print(
+            "Data-quality run ID: "
+            f"{data_quality_run_id}"
+        )
+
     print("=" * 72)
 
     return PipelineRefreshResult(
