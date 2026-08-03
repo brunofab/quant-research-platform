@@ -2,7 +2,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -514,4 +516,282 @@ class PipelineRun(Base):
     error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
+    )
+
+
+
+class DataQualityRun(Base):
+    """Record one execution of a data-quality suite."""
+
+    __tablename__ = "data_quality_runs"
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'running', "
+            "'passed', "
+            "'warning', "
+            "'failed'"
+            ")",
+            name="ck_data_quality_runs_status",
+        ),
+        CheckConstraint(
+            "checks_executed >= 0 AND "
+            "records_checked >= 0 AND "
+            "issues_found >= 0 AND "
+            "blocking_issues >= 0 AND "
+            "blocking_issues <= issues_found",
+            name="ck_data_quality_runs_nonnegative_counts",
+        ),
+        Index(
+            "ix_data_quality_runs_dataset_started_at",
+            "dataset",
+            "started_at",
+        ),
+        Index(
+            "ix_data_quality_runs_pipeline_status",
+            "pipeline_run_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    pipeline_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "pipeline_runs.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    dataset: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    source: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    scope_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        server_default="global",
+    )
+
+    scope_key: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="running",
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    checks_executed: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    records_checked: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default="0",
+    )
+
+    issues_found: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    blocking_issues: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    context_json: Mapped[
+        dict[str, object] | None
+    ] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+
+class DataQualityIssue(Base):
+    """Record one issue found by a quality check."""
+
+    __tablename__ = "data_quality_issues"
+
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ("
+            "'info', "
+            "'warning', "
+            "'error', "
+            "'critical'"
+            ")",
+            name="ck_data_quality_issues_severity",
+        ),
+        CheckConstraint(
+            "period_start IS NULL OR "
+            "period_end IS NULL OR "
+            "period_start <= period_end",
+            name="ck_data_quality_issues_period_order",
+        ),
+        Index(
+            "ix_data_quality_issues_run_severity",
+            "data_quality_run_id",
+            "severity",
+        ),
+        Index(
+            "ix_data_quality_issues_entity",
+            "entity_type",
+            "entity_key",
+        ),
+        Index(
+            "ix_data_quality_issues_dataset_check",
+            "dataset",
+            "check_name",
+        ),
+        Index(
+            "ix_data_quality_issues_company_period",
+            "company_id",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    data_quality_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "data_quality_runs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    company_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "companies.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    entity_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    entity_key: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    dataset: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    metric: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    check_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    severity: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    blocking: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+
+    period_start: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    period_end: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    available_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    actual_value: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    expected_value: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    message: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    context_json: Mapped[
+        dict[str, object] | None
+    ] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
