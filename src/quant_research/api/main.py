@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 from quant_research.database.connection import (
     create_database_engine,
 )
-from quant_research.database.models import PipelineRun
+from quant_research.database.models import (
+    DataQualityRun,
+    PipelineRun,
+)
 from quant_research.signals.capital_cycle_features import (
     SnapshotVintage,
 )
@@ -121,6 +124,44 @@ def serialize_pipeline_run(
         ),
         "error_message": (
             pipeline_run.error_message
+        ),
+    }
+
+
+def serialize_data_quality_run(
+    quality_run: DataQualityRun | None,
+) -> dict[str, object] | None:
+    """Convert one data-quality run to an API response."""
+
+    if quality_run is None:
+        return None
+
+    return {
+        "id": quality_run.id,
+        "pipeline_run_id": (
+            quality_run.pipeline_run_id
+        ),
+        "dataset": quality_run.dataset,
+        "source": quality_run.source,
+        "scope_type": quality_run.scope_type,
+        "scope_key": quality_run.scope_key,
+        "status": quality_run.status,
+        "started_at": quality_run.started_at,
+        "finished_at": quality_run.finished_at,
+        "checks_executed": (
+            quality_run.checks_executed
+        ),
+        "records_checked": (
+            quality_run.records_checked
+        ),
+        "issues_found": (
+            quality_run.issues_found
+        ),
+        "blocking_issues": (
+            quality_run.blocking_issues
+        ),
+        "error_message": (
+            quality_run.error_message
         ),
     }
 
@@ -291,7 +332,7 @@ def pipeline_status(
         Depends(get_session),
     ],
 ) -> dict[str, object]:
-    """Return the latest pipeline refresh status."""
+    """Return the latest pipeline and quality status."""
 
     latest_run = session.scalar(
         select(PipelineRun)
@@ -318,6 +359,26 @@ def pipeline_status(
         .limit(1)
     )
 
+    latest_quality_run: (
+        DataQualityRun | None
+    ) = None
+
+    if latest_run is not None:
+        latest_quality_run = session.scalar(
+            select(DataQualityRun)
+            .where(
+                DataQualityRun.pipeline_run_id
+                == latest_run.id,
+                DataQualityRun.dataset
+                == "normalized_financials",
+            )
+            .order_by(
+                DataQualityRun.started_at.desc(),
+                DataQualityRun.id.desc(),
+            )
+            .limit(1)
+        )
+
     return {
         "pipeline": "refresh",
         "has_run": latest_run is not None,
@@ -327,6 +388,11 @@ def pipeline_status(
         "last_successful_run": (
             serialize_pipeline_run(
                 last_successful_run
+            )
+        ),
+        "data_quality": (
+            serialize_data_quality_run(
+                latest_quality_run
             )
         ),
     }
