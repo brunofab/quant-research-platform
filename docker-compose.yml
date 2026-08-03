@@ -87,7 +87,7 @@ services:
     networks:
       - backend
 
-    dashboard:
+  dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
