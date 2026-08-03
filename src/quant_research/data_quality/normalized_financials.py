@@ -1209,6 +1209,279 @@ def fiscal_period_consistency(
     )
 
 
+def latest_period_freshness(
+    context: QualityCheckContext,
+) -> QualityCheckResult:
+    """Verify that core metrics reach the latest fiscal period."""
+
+    periods = load_recent_periods(context)
+
+    if not periods:
+        issue = QualityIssueDraft(
+            company_id=context.company_id,
+            entity_type="company",
+            entity_key=context.ticker,
+            dataset=DATASET,
+            metric=None,
+            check_name="latest_period_freshness",
+            severity="error",
+            blocking=False,
+            actual_value="No fiscal periods available",
+            expected_value=(
+                "At least one authoritative "
+                "fiscal period"
+            ),
+            message=(
+                f"{context.ticker} has no fiscal "
+                "period available for the freshness "
+                "check."
+            ),
+            context_json={
+                "lookback_periods": (
+                    context.lookback_periods
+                ),
+            },
+        )
+
+        return QualityCheckResult(
+            check_name="latest_period_freshness",
+            records_checked=1,
+            issues=(issue,),
+        )
+
+    expected_period = max(
+        periods,
+        key=lambda period: period.key,
+    )
+
+    observations = load_observations(context)
+
+    observations_by_metric: dict[
+        str,
+        list[FinancialObservation],
+    ] = defaultdict(list)
+
+    for observation in observations:
+        observations_by_metric[
+            observation.metric
+        ].append(observation)
+
+    issues: list[QualityIssueDraft] = []
+
+    for metric in REQUIRED_METRICS:
+        metric_observations = (
+            observations_by_metric.get(
+                metric,
+                [],
+            )
+        )
+
+        if not metric_observations:
+            issues.append(
+                QualityIssueDraft(
+                    company_id=context.company_id,
+                    entity_type="company",
+                    entity_key=context.ticker,
+                    dataset=DATASET,
+                    metric=metric,
+                    check_name=(
+                        "latest_period_freshness"
+                    ),
+                    severity="error",
+                    blocking=False,
+                    period_start=(
+                        expected_period.period_start
+                    ),
+                    period_end=(
+                        expected_period.period_end
+                    ),
+                    actual_value=(
+                        "No normalized quarterly "
+                        "observations"
+                    ),
+                    expected_value=(
+                        expected_period.label
+                    ),
+                    message=(
+                        f"{context.ticker} has no "
+                        f"normalized {metric} data, "
+                        f"while the latest fiscal "
+                        f"period is "
+                        f"{expected_period.label}."
+                    ),
+                    context_json={
+                        "expected_fiscal_year": (
+                            expected_period.fiscal_year
+                        ),
+                        "expected_fiscal_quarter": (
+                            expected_period
+                            .fiscal_quarter
+                        ),
+                        "expected_period_end": (
+                            expected_period
+                            .period_end
+                            .isoformat()
+                        ),
+                    },
+                )
+            )
+
+            continue
+
+        latest_metric_key = max(
+            (
+                observation.fiscal_year,
+                observation.fiscal_quarter,
+            )
+            for observation
+            in metric_observations
+        )
+
+        latest_metric_rows = [
+            observation
+            for observation
+            in metric_observations
+            if (
+                observation.fiscal_year,
+                observation.fiscal_quarter,
+            )
+            == latest_metric_key
+        ]
+
+        if latest_metric_key == expected_period.key:
+            continue
+
+        expected_ordinal = (
+            expected_period.fiscal_year * 4
+            + expected_period.fiscal_quarter
+        )
+
+        actual_ordinal = (
+            latest_metric_key[0] * 4
+            + latest_metric_key[1]
+        )
+
+        period_difference = (
+            expected_ordinal - actual_ordinal
+        )
+
+        latest_available_at = max(
+            observation.available_at
+            for observation
+            in latest_metric_rows
+        )
+
+        latest_period_end = max(
+            observation.period_end
+            for observation
+            in latest_metric_rows
+        )
+
+        if period_difference > 0:
+            direction = "behind"
+
+            message = (
+                f"{context.ticker} {metric} is "
+                f"{period_difference} fiscal "
+                "period(s) behind the latest "
+                f"known period "
+                f"{expected_period.label}."
+            )
+
+        else:
+            direction = "ahead"
+
+            message = (
+                f"{context.ticker} {metric} is "
+                f"{abs(period_difference)} fiscal "
+                "period(s) ahead of the latest "
+                "known fiscal-period record."
+            )
+
+        actual_label = (
+            f"FY{latest_metric_key[0]} "
+            f"Q{latest_metric_key[1]}"
+        )
+
+        issues.append(
+            QualityIssueDraft(
+                company_id=context.company_id,
+                entity_type="company",
+                entity_key=context.ticker,
+                dataset=DATASET,
+                metric=metric,
+                check_name=(
+                    "latest_period_freshness"
+                ),
+                severity="error",
+                blocking=False,
+                period_start=(
+                    expected_period.period_start
+                ),
+                period_end=(
+                    expected_period.period_end
+                ),
+                available_at=(
+                    date_as_utc_datetime(
+                        latest_available_at
+                    )
+                ),
+                actual_value=actual_label,
+                expected_value=(
+                    expected_period.label
+                ),
+                message=message,
+                context_json={
+                    "direction": direction,
+                    "expected_fiscal_year": (
+                        expected_period.fiscal_year
+                    ),
+                    "expected_fiscal_quarter": (
+                        expected_period
+                        .fiscal_quarter
+                    ),
+                    "expected_period_end": (
+                        expected_period
+                        .period_end
+                        .isoformat()
+                    ),
+                    "latest_metric_fiscal_year": (
+                        latest_metric_key[0]
+                    ),
+                    "latest_metric_fiscal_quarter": (
+                        latest_metric_key[1]
+                    ),
+                    "latest_metric_period_end": (
+                        latest_period_end.isoformat()
+                    ),
+                    "periods_behind": (
+                        max(0, period_difference)
+                    ),
+                    "periods_ahead": (
+                        abs(period_difference)
+                        if period_difference < 0
+                        else 0
+                    ),
+                    "latest_available_at": (
+                        latest_available_at
+                        .isoformat()
+                    ),
+                    "latest_row_ids": [
+                        observation.id
+                        for observation
+                        in latest_metric_rows
+                    ],
+                },
+            )
+        )
+
+    return QualityCheckResult(
+        check_name="latest_period_freshness",
+        records_checked=len(REQUIRED_METRICS),
+        issues=tuple(issues),
+    )
+
+
 NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="missing_required_metrics",
@@ -1229,5 +1502,9 @@ NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="fiscal_period_consistency",
         run=fiscal_period_consistency,
+    ),
+    RegisteredQualityCheck(
+        name="latest_period_freshness",
+        run=latest_period_freshness,
     ),
 )
