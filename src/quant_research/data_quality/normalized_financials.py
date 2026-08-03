@@ -16,6 +16,8 @@ from quant_research.data_quality.core import (
 from quant_research.database.models import (
     FiscalPeriod,
     NormalizedFinancial,
+    NormalizedFinancialDependency,
+    NormalizedFinancialSource,
 )
 
 DATASET = "normalized_financials"
@@ -85,6 +87,15 @@ class FinancialObservation:
             self.fiscal_year,
             self.fiscal_quarter,
         )
+
+
+@dataclass(frozen=True)
+class LineageAssessment:
+    """Result of recursively tracing one normalized row."""
+
+    complete: bool
+    missing_leaf_ids: frozenset[int]
+    cycle_detected: bool
 
 
 def date_as_utc_datetime(
@@ -256,6 +267,240 @@ def canonical_latest_observation(
         return None
 
     return latest[0]
+
+
+def load_latest_required_observations(
+    context: QualityCheckContext,
+) -> list[FinancialObservation]:
+    """Load one unambiguous latest row per metric and quarter."""
+
+    periods = load_recent_periods(context)
+
+    grouped = group_observations(
+        load_observations(context)
+    )
+
+    selected: list[
+        FinancialObservation
+    ] = []
+
+    for period in periods:
+        for metric in REQUIRED_METRICS:
+            observations = grouped.get(
+                (
+                    metric,
+                    period.fiscal_year,
+                    period.fiscal_quarter,
+                )
+            )
+
+            if not observations:
+                continue
+
+            latest = canonical_latest_observation(
+                observations
+            )
+
+            if latest is None:
+                continue
+
+            selected.append(latest)
+
+    return selected
+
+
+def load_lineage_graph(
+    context: QualityCheckContext,
+    root_ids: set[int],
+) -> tuple[
+    dict[int, frozenset[int]],
+    dict[int, int],
+]:
+    """Load every dependency reachable from the roots."""
+
+    dependencies: dict[
+        int,
+        set[int],
+    ] = defaultdict(set)
+
+    raw_source_counts: dict[
+        int,
+        int,
+    ] = defaultdict(int)
+
+    visited: set[int] = set()
+    frontier = set(root_ids)
+
+    while frontier:
+        batch = frontier - visited
+
+        if not batch:
+            break
+
+        visited.update(batch)
+
+        raw_source_ids = context.session.scalars(
+            select(
+                NormalizedFinancialSource
+                .normalized_financial_id
+            ).where(
+                NormalizedFinancialSource
+                .normalized_financial_id
+                .in_(batch)
+            )
+        )
+
+        for normalized_id in raw_source_ids:
+            raw_source_counts[
+                normalized_id
+            ] += 1
+
+        dependency_rows = (
+            context.session.execute(
+                select(
+                    NormalizedFinancialDependency
+                    .derived_financial_id,
+                    NormalizedFinancialDependency
+                    .source_financial_id,
+                ).where(
+                    NormalizedFinancialDependency
+                    .derived_financial_id
+                    .in_(batch)
+                )
+            )
+        )
+
+        next_frontier: set[int] = set()
+
+        for row in dependency_rows:
+            derived_id = (
+                row.derived_financial_id
+            )
+
+            source_id = (
+                row.source_financial_id
+            )
+
+            dependencies[
+                derived_id
+            ].add(source_id)
+
+            if source_id not in visited:
+                next_frontier.add(source_id)
+
+        frontier = next_frontier
+
+    frozen_dependencies = {
+        normalized_id: frozenset(
+            source_ids
+        )
+        for normalized_id, source_ids
+        in dependencies.items()
+    }
+
+    return (
+        frozen_dependencies,
+        dict(raw_source_counts),
+    )
+
+
+def assess_lineage(
+    normalized_id: int,
+    dependencies: dict[
+        int,
+        frozenset[int],
+    ],
+    raw_source_counts: dict[int, int],
+    memo: dict[int, LineageAssessment],
+    active_path: set[int],
+) -> LineageAssessment:
+    """Recursively determine whether lineage reaches raw facts."""
+
+    cached = memo.get(normalized_id)
+
+    if cached is not None:
+        return cached
+
+    if normalized_id in active_path:
+        return LineageAssessment(
+            complete=False,
+            missing_leaf_ids=frozenset(),
+            cycle_detected=True,
+        )
+
+    source_ids = dependencies.get(
+        normalized_id,
+        frozenset(),
+    )
+
+    if not source_ids:
+        if (
+            raw_source_counts.get(
+                normalized_id,
+                0,
+            )
+            > 0
+        ):
+            result = LineageAssessment(
+                complete=True,
+                missing_leaf_ids=frozenset(),
+                cycle_detected=False,
+            )
+
+        else:
+            result = LineageAssessment(
+                complete=False,
+                missing_leaf_ids=frozenset(
+                    {normalized_id}
+                ),
+                cycle_detected=False,
+            )
+
+        memo[normalized_id] = result
+
+        return result
+
+    active_path.add(normalized_id)
+
+    try:
+        child_results = [
+            assess_lineage(
+                normalized_id=source_id,
+                dependencies=dependencies,
+                raw_source_counts=(
+                    raw_source_counts
+                ),
+                memo=memo,
+                active_path=active_path,
+            )
+            for source_id in source_ids
+        ]
+
+    finally:
+        active_path.remove(normalized_id)
+
+    missing_leaf_ids = frozenset().union(
+        *(
+            result.missing_leaf_ids
+            for result in child_results
+        )
+    )
+
+    result = LineageAssessment(
+        complete=all(
+            child.complete
+            for child in child_results
+        ),
+        missing_leaf_ids=missing_leaf_ids,
+        cycle_detected=any(
+            child.cycle_detected
+            for child in child_results
+        ),
+    )
+
+    memo[normalized_id] = result
+
+    return result
 
 
 def missing_required_metrics(
@@ -614,6 +859,150 @@ def fcf_reconciliation(
         issues=tuple(issues),
     )
 
+def lineage_completeness(
+    context: QualityCheckContext,
+) -> QualityCheckResult:
+    """Verify that normalized values resolve to raw facts."""
+
+    observations = (
+        load_latest_required_observations(
+            context
+        )
+    )
+
+    root_ids = {
+        observation.id
+        for observation in observations
+    }
+
+    (
+        dependencies,
+        raw_source_counts,
+    ) = load_lineage_graph(
+        context=context,
+        root_ids=root_ids,
+    )
+
+    memo: dict[
+        int,
+        LineageAssessment,
+    ] = {}
+
+    issues: list[
+        QualityIssueDraft
+    ] = []
+
+    for observation in observations:
+        assessment = assess_lineage(
+            normalized_id=observation.id,
+            dependencies=dependencies,
+            raw_source_counts=(
+                raw_source_counts
+            ),
+            memo=memo,
+            active_path=set(),
+        )
+
+        if assessment.complete:
+            continue
+
+        reasons: list[str] = []
+
+        if assessment.missing_leaf_ids:
+            reasons.append(
+                "one or more lineage leaves have "
+                "neither raw sources nor dependencies"
+            )
+
+        if assessment.cycle_detected:
+            reasons.append(
+                "a dependency cycle was detected"
+            )
+
+        reason_text = (
+            "; ".join(reasons)
+            if reasons
+            else "no complete raw-data path exists"
+        )
+
+        fiscal_label = (
+            f"FY{observation.fiscal_year} "
+            f"Q{observation.fiscal_quarter}"
+        )
+
+        issues.append(
+            QualityIssueDraft(
+                company_id=context.company_id,
+                entity_type="company",
+                entity_key=context.ticker,
+                dataset=DATASET,
+                metric=observation.metric,
+                check_name=(
+                    "lineage_completeness"
+                ),
+                severity="error",
+                blocking=False,
+                period_start=(
+                    observation.period_start
+                ),
+                period_end=observation.period_end,
+                available_at=(
+                    date_as_utc_datetime(
+                        observation.available_at
+                    )
+                ),
+                actual_value=(
+                    "Incomplete normalized-financial "
+                    "lineage"
+                ),
+                expected_value=(
+                    "Every dependency branch resolves "
+                    "to at least one financial_fact"
+                ),
+                message=(
+                    f"{context.ticker} "
+                    f"{fiscal_label} "
+                    f"{observation.metric} has "
+                    f"incomplete lineage: "
+                    f"{reason_text}."
+                ),
+                context_json={
+                    "normalized_financial_id": (
+                        observation.id
+                    ),
+                    "derivation_type": (
+                        observation.derivation_type
+                    ),
+                    "direct_raw_source_count": (
+                        raw_source_counts.get(
+                            observation.id,
+                            0,
+                        )
+                    ),
+                    "immediate_dependency_ids": (
+                        sorted(
+                            dependencies.get(
+                                observation.id,
+                                frozenset(),
+                            )
+                        )
+                    ),
+                    "missing_leaf_ids": sorted(
+                        assessment.missing_leaf_ids
+                    ),
+                    "cycle_detected": (
+                        assessment.cycle_detected
+                    ),
+                },
+            )
+        )
+
+    return QualityCheckResult(
+        check_name="lineage_completeness",
+        records_checked=len(observations),
+        issues=tuple(issues),
+    )
+
 
 NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
@@ -627,5 +1016,9 @@ NORMALIZED_FINANCIAL_CHECKS = (
     RegisteredQualityCheck(
         name="fcf_reconciliation",
         run=fcf_reconciliation,
+    ),
+    RegisteredQualityCheck(
+        name="lineage_completeness",
+        run=lineage_completeness,
     ),
 )
