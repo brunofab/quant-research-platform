@@ -19,6 +19,7 @@ from quant_research.database.models import (
 )
 
 DATASET = "normalized_financials"
+PERIOD_TYPE = "quarter"
 
 REQUIRED_METRICS = (
     "revenue",
@@ -162,7 +163,7 @@ def load_observations(
             NormalizedFinancial.company_id
             == context.company_id,
             NormalizedFinancial.period_type
-            == "quarterly",
+            == PERIOD_TYPE,
             NormalizedFinancial.metric.in_(
                 REQUIRED_METRICS
             ),
