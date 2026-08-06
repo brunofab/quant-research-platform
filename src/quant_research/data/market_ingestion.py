@@ -30,6 +30,7 @@ from quant_research.database.models import (
 PROVIDER = "twelve_data"
 ADJUSTMENT_TYPE = "split_adjusted"
 INTERVAL = "1day"
+INSERT_BATCH_SIZE = 1000
 
 def completed_bars(
     time_series: DailyTimeSeries,
@@ -294,10 +295,19 @@ def ingest_market_bars(
         - len(existing_source_keys)
     )
 
-    if rows:
+    for start_index in range(
+        0,
+        len(rows),
+        INSERT_BATCH_SIZE,
+    ):
+        batch = rows[
+            start_index:
+            start_index + INSERT_BATCH_SIZE
+        ]
+
         statement = (
             postgresql_insert(MarketBar)
-            .values(rows)
+            .values(batch)
             .on_conflict_do_update(
                 constraint=(
                     "uq_market_bars_source_key"
