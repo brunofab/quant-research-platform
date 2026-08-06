@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter_ns
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from quant_research.data_quality.core import (
@@ -21,6 +23,7 @@ from quant_research.database.connection import (
 )
 from quant_research.database.models import (
     Company,
+    DataQualityCheckResult,
     DataQualityIssue,
     DataQualityRun,
 )
@@ -212,6 +215,50 @@ def persist_issue(
         )
     )
 
+def persist_check_result(
+    session: Session,
+    *,
+    run_id: int,
+    company: QualityCompany,
+    dataset: str,
+    check_name: str,
+    execution_order: int,
+    status: str,
+    records_checked: int,
+    issues_found: int,
+    blocking_issues: int,
+    started_at: datetime,
+    finished_at: datetime,
+    duration_ms: int,
+    error_message: str | None = None,
+) -> None:
+    """Persist one executed quality-check result."""
+
+    session.add(
+        DataQualityCheckResult(
+            data_quality_run_id=run_id,
+            company_id=company.id,
+            scope_type="company",
+            scope_key=company.ticker,
+            dataset=dataset,
+            check_name=check_name,
+            execution_order=execution_order,
+            status=status,
+            records_checked=records_checked,
+            issues_found=issues_found,
+            blocking_issues=blocking_issues,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            error_message=(
+                error_message[:10_000]
+                if error_message
+                else None
+            ),
+        )
+    )
+
+
 
 def finish_quality_run(
     engine: Engine,
@@ -345,47 +392,177 @@ def run_data_quality(
                 )
 
                 for check in checks:
-                    result = check.run(context)
+                    execution_order = (
+                        checks_executed + 1
+                    )
 
-                    if (
-                        result.check_name
-                        != check.name
-                    ):
-                        raise RuntimeError(
-                            f"Check {check.name} "
-                            "returned a mismatched "
-                            "check name."
+                    check_started_at = (
+                        datetime.now(UTC)
+                    )
+
+                    check_started_ns = (
+                        perf_counter_ns()
+                    )
+
+                    try:
+                        result = check.run(context)
+
+                        if (
+                            result.check_name
+                            != check.name
+                        ):
+                            raise RuntimeError(
+                                f"Check {check.name} "
+                                "returned a mismatched "
+                                "check name."
+                            )
+
+                        check_issues_found = len(
+                            result.issues
                         )
 
-                    checks_executed += 1
+                        check_blocking_issues = sum(
+                            1
+                            for issue in result.issues
+                            if issue.blocking
+                        )
+
+                        check_status = resolve_status(
+                            issues_found=(
+                                check_issues_found
+                            ),
+                            blocking_issues=(
+                                check_blocking_issues
+                            ),
+                        )
+
+                        check_finished_at = (
+                            datetime.now(UTC)
+                        )
+
+                        duration_ms = max(
+                            0,
+                            (
+                                perf_counter_ns()
+                                - check_started_ns
+                            )
+                            // 1_000_000,
+                        )
+
+                        for issue in result.issues:
+                            persist_issue(
+                                session,
+                                run_id=run_id,
+                                issue=issue,
+                            )
+
+                        persist_check_result(
+                            session,
+                            run_id=run_id,
+                            company=company,
+                            dataset=dataset,
+                            check_name=check.name,
+                            execution_order=(
+                                execution_order
+                            ),
+                            status=check_status,
+                            records_checked=(
+                                result.records_checked
+                            ),
+                            issues_found=(
+                                check_issues_found
+                            ),
+                            blocking_issues=(
+                                check_blocking_issues
+                            ),
+                            started_at=(
+                                check_started_at
+                            ),
+                            finished_at=(
+                                check_finished_at
+                            ),
+                            duration_ms=duration_ms,
+                        )
+
+                        session.commit()
+
+                    except Exception as error:
+                        check_finished_at = (
+                            datetime.now(UTC)
+                        )
+
+                        duration_ms = max(
+                            0,
+                            (
+                                perf_counter_ns()
+                                - check_started_ns
+                            )
+                            // 1_000_000,
+                        )
+
+                        session.rollback()
+
+                        checks_executed = (
+                            execution_order
+                        )
+
+                        try:
+                            persist_check_result(
+                                session,
+                                run_id=run_id,
+                                company=company,
+                                dataset=dataset,
+                                check_name=check.name,
+                                execution_order=(
+                                    execution_order
+                                ),
+                                status="failed",
+                                records_checked=0,
+                                issues_found=0,
+                                blocking_issues=0,
+                                started_at=(
+                                    check_started_at
+                                ),
+                                finished_at=(
+                                    check_finished_at
+                                ),
+                                duration_ms=duration_ms,
+                                error_message=(
+                                    f"{type(error).__name__}: "
+                                    f"{error}"
+                                ),
+                            )
+
+                            session.commit()
+
+                        except SQLAlchemyError:
+                            session.rollback()
+
+                        raise
+
+                    checks_executed = (
+                        execution_order
+                    )
+
                     records_checked += (
                         result.records_checked
                     )
-                    issues_found += len(
-                        result.issues
-                    )
-                    blocking_issues += sum(
-                        1
-                        for issue in result.issues
-                        if issue.blocking
+
+                    issues_found += (
+                        check_issues_found
                     )
 
-                    for issue in result.issues:
-                        persist_issue(
-                            session,
-                            run_id=run_id,
-                            issue=issue,
-                        )
+                    blocking_issues += (
+                        check_blocking_issues
+                    )
 
                     print(
                         f"{check.name}: "
                         f"{result.records_checked} "
                         "records checked, "
-                        f"{len(result.issues)} "
+                        f"{check_issues_found} "
                         "issues."
                     )
-
-            session.commit()
 
         status = resolve_status(
             issues_found=issues_found,
