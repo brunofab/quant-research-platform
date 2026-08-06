@@ -795,3 +795,156 @@ class DataQualityIssue(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class DataQualityCheckResult(Base):
+    """Persisted result of one executed quality check."""
+
+    __tablename__ = "data_quality_check_results"
+
+    __table_args__ = (
+        CheckConstraint(
+            (
+                "status IN "
+                "('passed', 'warning', 'failed')"
+            ),
+            name=(
+                "ck_data_quality_check_results_status"
+            ),
+        ),
+        CheckConstraint(
+            (
+                "execution_order >= 1 "
+                "AND records_checked >= 0 "
+                "AND issues_found >= 0 "
+                "AND blocking_issues >= 0 "
+                "AND blocking_issues <= issues_found "
+                "AND duration_ms >= 0"
+            ),
+            name=(
+                "ck_data_quality_check_results_counts"
+            ),
+        ),
+        CheckConstraint(
+            "finished_at >= started_at",
+            name=(
+                "ck_data_quality_check_results_time_order"
+            ),
+        ),
+        UniqueConstraint(
+            "data_quality_run_id",
+            "scope_type",
+            "scope_key",
+            "dataset",
+            "check_name",
+            name=(
+                "uq_data_quality_check_results_identity"
+            ),
+        ),
+        Index(
+            "ix_data_quality_check_results_run_status",
+            "data_quality_run_id",
+            "status",
+        ),
+        Index(
+            "ix_data_quality_check_results_run_check",
+            "data_quality_run_id",
+            "check_name",
+        ),
+        Index(
+            "ix_data_quality_check_results_company_id",
+            "company_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+    )
+
+    data_quality_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "data_quality_runs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    company_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "companies.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+
+    scope_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    scope_key: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    dataset: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    check_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    execution_order: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    records_checked: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    issues_found: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    blocking_issues: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    finished_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    duration_ms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
