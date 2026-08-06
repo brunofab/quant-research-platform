@@ -1971,3 +1971,119 @@ tbody tr:last-child td {
   padding: 14px 16px;
   border-top: 1px solid #283244;
 }
+
+.quality-run-header {
+  align-items: flex-end;
+}
+
+.quality-run-selector {
+  display: grid;
+  min-width: 310px;
+  gap: 7px;
+}
+
+.quality-run-selector span {
+  color: #748096;
+  font-size: 0.57rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quality-run-selector select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #344157;
+  border-radius: 7px;
+  color: #e3e9f2;
+  background: #111925;
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.quality-summary-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(6, minmax(0, 1fr));
+  border-top: 1px solid #283244;
+}
+
+.quality-summary-metric {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid #283244;
+}
+
+.quality-summary-metric:last-child {
+  border-right: 0;
+}
+
+.quality-summary-metric > span,
+.quality-summary-metric > strong {
+  display: block;
+}
+
+.quality-summary-metric > span {
+  margin-bottom: 7px;
+  color: #748096;
+  font-size: 0.61rem;
+}
+
+.quality-summary-metric > strong {
+  color: #e3e9f2;
+  font-size: 0.77rem;
+}
+
+.quality-checks-card {
+  margin-top: 24px;
+}
+
+.quality-legacy-note {
+  padding: 20px;
+  border-top: 1px solid #283244;
+  color: #d5bd76;
+  background: #201d14;
+  font-size: 0.73rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+  .quality-summary-grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+
+  .quality-summary-metric:nth-child(3) {
+    border-right: 0;
+  }
+
+  .quality-summary-metric:nth-child(-n + 3) {
+    border-bottom: 1px solid #283244;
+  }
+}
+
+@media (max-width: 720px) {
+  .quality-run-header {
+    align-items: stretch;
+  }
+
+  .quality-run-selector {
+    min-width: 0;
+  }
+
+  .quality-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .quality-summary-metric {
+    border-bottom: 1px solid #283244;
+  }
+
+  .quality-summary-metric:nth-child(odd) {
+    border-right: 1px solid #283244;
+  }
+
+  .quality-summary-metric:nth-child(even) {
+    border-right: 0;
+  }
+}

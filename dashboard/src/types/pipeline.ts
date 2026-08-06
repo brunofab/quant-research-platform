@@ -115,3 +115,19 @@ export type DataQualityChecksResponse = {
   total_result_rows: number
   checks: DataQualityCheckSummary[]
 }
+
+export type DataQualityRunHistoryItem =
+  DataQualityRun & {
+    check_result_rows: number
+  }
+
+export type DataQualityRunsResponse = {
+  filters: {
+    status: DataQualityRunStatus | null
+    dataset: string | null
+    source: string | null
+    limit: number
+  }
+  returned_runs: number
+  runs: DataQualityRunHistoryItem[]
+}
