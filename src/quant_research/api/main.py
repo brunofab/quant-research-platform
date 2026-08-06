@@ -56,6 +56,13 @@ DataQualitySeverity = Literal[
     "critical",
 ]
 
+DataQualityRunStatus = Literal[
+    "running",
+    "passed",
+    "warning",
+    "failed",
+]
+
 app = FastAPI(
     title="Quant Research Platform API",
     version="0.1.0",
@@ -440,6 +447,125 @@ def pipeline_status(
                 latest_quality_run
             )
         ),
+    }
+
+
+@app.get("/api/v1/data-quality/runs")
+def data_quality_runs(
+    session: Annotated[
+        Session,
+        Depends(get_session),
+    ],
+    status: DataQualityRunStatus | None = None,
+    dataset: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional exact dataset name."
+            )
+        ),
+    ] = None,
+    source: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional exact data source."
+            )
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=200),
+    ] = 20,
+) -> dict[str, object]:
+    """Return recent data-quality runs."""
+
+    conditions = []
+
+    if status is not None:
+        conditions.append(
+            DataQualityRun.status == status
+        )
+
+    normalized_dataset = (
+        dataset.strip()
+        if dataset
+        else None
+    )
+
+    if normalized_dataset:
+        conditions.append(
+            DataQualityRun.dataset
+            == normalized_dataset
+        )
+
+    normalized_source = (
+        source.strip()
+        if source
+        else None
+    )
+
+    if normalized_source:
+        conditions.append(
+            DataQualityRun.source
+            == normalized_source
+        )
+
+    statement = (
+        select(
+            DataQualityRun,
+            func.count(
+                DataQualityCheckResult.id
+            ).label("check_result_rows"),
+        )
+        .outerjoin(
+            DataQualityCheckResult,
+            (
+                DataQualityCheckResult
+                .data_quality_run_id
+                == DataQualityRun.id
+            ),
+        )
+        .where(*conditions)
+        .group_by(DataQualityRun.id)
+        .order_by(
+            DataQualityRun.started_at.desc(),
+            DataQualityRun.id.desc(),
+        )
+        .limit(limit)
+    )
+
+    rows = session.execute(
+        statement
+    ).all()
+
+    runs: list[dict[str, object]] = []
+
+    for quality_run, check_result_rows in rows:
+        serialized_run = (
+            serialize_data_quality_run(
+                quality_run
+            )
+        )
+
+        if serialized_run is None:
+            continue
+
+        serialized_run[
+            "check_result_rows"
+        ] = int(check_result_rows or 0)
+
+        runs.append(serialized_run)
+
+    return {
+        "filters": {
+            "status": status,
+            "dataset": normalized_dataset,
+            "source": normalized_source,
+            "limit": limit,
+        },
+        "returned_runs": len(runs),
+        "runs": runs,
     }
 
 
