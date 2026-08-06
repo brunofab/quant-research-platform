@@ -37,6 +37,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SEC_USER_AGENT: ${SEC_USER_AGENT}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY}
 
     depends_on:
       db:
