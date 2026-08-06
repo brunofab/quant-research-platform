@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -7,10 +8,22 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter_ns
 
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
+from quant_research.data.market_ingestion import (
+    INTERVAL,
+    PROVIDER,
+    MarketIngestionSummary,
+    MarketIngestionTarget,
+    ingest_market_target,
+    print_ingestion_summary,
+)
+from quant_research.data.twelve_data import (
+    TwelveDataClient,
+)
 from quant_research.data_quality.runner import (
     run_data_quality,
 )
@@ -22,8 +35,11 @@ from quant_research.database.models import (
     Filing,
     FinancialFact,
     FiscalPeriod,
+    MarketBar,
+    MarketInstrument,
     NormalizedFinancial,
     PipelineRun,
+    PipelineStepResult,
 )
 from quant_research.signals.capital_cycle_features import (
     SnapshotVintage,
@@ -37,9 +53,10 @@ from quant_research.signals.universe import (
 
 PIPELINE_LOCK_NAMESPACE = 1_726_001
 PIPELINE_LOCK_ID = 1
-
 DATA_QUALITY_DATASET = "normalized_financials"
 DATA_QUALITY_LOOKBACK_PERIODS = 12
+MARKET_DATA_OUTPUTSIZE = 30
+MARKET_DATA_EXECUTION_ORDER = 4
 
 
 class PipelineAlreadyRunningError(RuntimeError):
@@ -110,6 +127,7 @@ class CompanyCounts:
     financial_facts: int
     fiscal_periods: int
     normalized_financials: int
+    market_bars: int
 
     @property
     def total(self) -> int:
@@ -120,6 +138,7 @@ class CompanyCounts:
             + self.financial_facts
             + self.fiscal_periods
             + self.normalized_financials
+            + self.market_bars
         )
 
     def inserted_since(
@@ -147,6 +166,11 @@ class CompanyCounts:
                 0,
                 self.normalized_financials
                 - previous.normalized_financials,
+            ),
+            market_bars=max(
+                0,
+                self.market_bars
+                - previous.market_bars,
             ),
         )
 
@@ -339,6 +363,24 @@ def company_counts(
             or 0
         )
 
+        market_bars = (
+            session.scalar(
+                select(
+                    func.count(MarketBar.id)
+                )
+                .join(
+                    MarketInstrument,
+                    MarketInstrument.id
+                    == MarketBar.instrument_id,
+                )
+                .where(
+                    MarketInstrument.company_id
+                    == company_id
+                )
+            )
+            or 0
+        )
+
         return CompanyCounts(
             filings=filings,
             financial_facts=financial_facts,
@@ -346,6 +388,7 @@ def company_counts(
             normalized_financials=(
                 normalized_financials
             ),
+            market_bars=market_bars,
         )
 
 
@@ -417,6 +460,98 @@ def finish_pipeline_run(
         )
 
         session.commit()
+
+
+def persist_pipeline_step_result(
+    engine: Engine,
+    *,
+    run_id: int,
+    company: PipelineCompany,
+    step_name: str,
+    execution_order: int,
+    status: str,
+    records_received: int,
+    records_inserted: int,
+    records_seen_again: int,
+    started_at: datetime,
+    finished_at: datetime,
+    duration_ms: int,
+    error_message: str | None = None,
+    context_json: dict[str, object] | None = None,
+) -> None:
+    """Persist one company-level pipeline step."""
+
+    with Session(engine) as session:
+        session.add(
+            PipelineStepResult(
+                pipeline_run_id=run_id,
+                company_id=company.id,
+                scope_type="company",
+                scope_key=company.ticker,
+                step_name=step_name,
+                execution_order=execution_order,
+                status=status,
+                records_received=records_received,
+                records_inserted=records_inserted,
+                records_seen_again=records_seen_again,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                error_message=(
+                    error_message[:10_000]
+                    if error_message
+                    else None
+                ),
+                context_json=context_json,
+            )
+        )
+
+        session.commit()
+
+
+def load_company_market_target(
+    engine: Engine,
+    company: PipelineCompany,
+) -> MarketIngestionTarget:
+    """Load one active Twelve Data target."""
+
+    with Session(engine) as session:
+        provider_symbols = list(
+            session.scalars(
+                select(
+                    MarketInstrument.provider_symbol
+                )
+                .where(
+                    MarketInstrument.company_id
+                    == company.id,
+                    MarketInstrument.provider
+                    == PROVIDER,
+                    MarketInstrument.is_active.is_(
+                        True
+                    ),
+                )
+                .order_by(
+                    MarketInstrument.id
+                )
+            )
+        )
+
+    if not provider_symbols:
+        raise ValueError(
+            f"{company.ticker} has no active "
+            f"{PROVIDER} market instrument."
+        )
+
+    if len(provider_symbols) > 1:
+        raise ValueError(
+            f"{company.ticker} has multiple active "
+            f"{PROVIDER} market instruments."
+        )
+
+    return MarketIngestionTarget(
+        ticker=company.ticker,
+        provider_symbol=provider_symbols[0],
+    )
 
 
 def run_command_step(
@@ -504,6 +639,143 @@ def refresh_company_data(
             "--all",
         ],
     )
+
+
+def refresh_company_market_data(
+    engine: Engine,
+    *,
+    run_id: int,
+    company: PipelineCompany,
+) -> MarketIngestionSummary:
+    """Refresh and record one company's market data."""
+
+    started_at = datetime.now(UTC)
+    started_counter = perf_counter_ns()
+
+    provider_symbol: str | None = None
+
+    try:
+        api_key = os.environ.get(
+            "TWELVE_DATA_API_KEY"
+        )
+
+        if not api_key:
+            raise RuntimeError(
+                "TWELVE_DATA_API_KEY is not set."
+            )
+
+        target = load_company_market_target(
+            engine=engine,
+            company=company,
+        )
+
+        provider_symbol = (
+            target.provider_symbol
+        )
+
+        with TwelveDataClient(
+            api_key
+        ) as client:
+            summary = ingest_market_target(
+                engine=engine,
+                client=client,
+                target=target,
+                outputsize=(
+                    MARKET_DATA_OUTPUTSIZE
+                ),
+            )
+
+    except Exception as error:
+        finished_at = datetime.now(UTC)
+        duration_ms = max(
+            0,
+            (
+                perf_counter_ns()
+                - started_counter
+            )
+            // 1_000_000,
+        )
+
+        persist_pipeline_step_result(
+            engine,
+            run_id=run_id,
+            company=company,
+            step_name="market_data",
+            execution_order=(
+                MARKET_DATA_EXECUTION_ORDER
+            ),
+            status="failed",
+            records_received=0,
+            records_inserted=0,
+            records_seen_again=0,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            error_message=str(error),
+            context_json={
+                "provider": PROVIDER,
+                "provider_symbol": (
+                    provider_symbol
+                ),
+                "interval": INTERVAL,
+                "outputsize": (
+                    MARKET_DATA_OUTPUTSIZE
+                ),
+            },
+        )
+
+        raise
+
+    finished_at = datetime.now(UTC)
+    duration_ms = max(
+        0,
+        (
+            perf_counter_ns()
+            - started_counter
+        )
+        // 1_000_000,
+    )
+
+    persist_pipeline_step_result(
+        engine,
+        run_id=run_id,
+        company=company,
+        step_name="market_data",
+        execution_order=(
+            MARKET_DATA_EXECUTION_ORDER
+        ),
+        status="succeeded",
+        records_received=(
+            summary.bars_received
+        ),
+        records_inserted=(
+            summary.bars_inserted
+        ),
+        records_seen_again=(
+            summary.bars_seen_again
+        ),
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        context_json={
+            "provider": PROVIDER,
+            "provider_symbol": (
+                summary.provider_symbol
+            ),
+            "interval": INTERVAL,
+            "outputsize": (
+                MARKET_DATA_OUTPUTSIZE
+            ),
+        },
+    )
+
+    print()
+    print(
+        f"[{company.ticker}: market data]"
+    )
+    print_ingestion_summary(summary)
+
+    return summary
 
 
 def validate_company_signals(
@@ -626,6 +898,12 @@ def _refresh_companies_without_lock(
             try:
                 refresh_company_data(company)
 
+                refresh_company_market_data(
+                    engine=engine,
+                    run_id=run_id,
+                    company=company,
+                )
+
                 if validate_signals:
                     validate_company_signals(
                         engine=engine,
@@ -665,6 +943,10 @@ def _refresh_companies_without_lock(
             print(
                 "Normalized financials: "
                 f"{inserted.normalized_financials}"
+            )
+            print(
+                "Market bars: "
+                f"{inserted.market_bars}"
             )
             print(f"Total: {inserted.total}")
 
