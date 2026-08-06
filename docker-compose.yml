@@ -12,7 +12,11 @@ services:
       - postgres_data:/var/lib/postgresql
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -69,14 +73,7 @@ services:
         condition: service_healthy
 
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-      - "127.0.0.1:8080:8080"
-
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
+      - "127.0.0.1:8000:8000"
 
     healthcheck:
       test:
@@ -109,7 +106,14 @@ services:
       - api
 
     ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
       - "127.0.0.1:8080:8080"
+
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
 
     networks:
       - backend
