@@ -89,3 +89,29 @@ export type PipelineStatusResponse = {
   last_successful_run: PipelineRun | null
   data_quality: DataQualityRun | null
 }
+
+export type DataQualityCheckStatus =
+  | 'passed'
+  | 'warning'
+  | 'failed'
+
+export type DataQualityCheckSummary = {
+  dataset: string
+  check_name: string
+  execution_order: number
+  status: DataQualityCheckStatus
+  result_rows: number
+  companies_checked: number
+  records_checked: number
+  issues_found: number
+  blocking_issues: number
+  duration_ms: number
+  maximum_duration_ms: number
+}
+
+export type DataQualityChecksResponse = {
+  run: DataQualityRun
+  total_checks: number
+  total_result_rows: number
+  checks: DataQualityCheckSummary[]
+}

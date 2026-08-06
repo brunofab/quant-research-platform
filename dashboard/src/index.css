@@ -1879,3 +1879,95 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+.home-quality-card {
+  margin-top: 24px;
+}
+
+.home-quality-table-wrapper {
+  overflow-x: auto;
+}
+
+.home-quality-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.home-quality-table th,
+.home-quality-table td {
+  padding: 13px 16px;
+  border-top: 1px solid #283244;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.home-quality-table th:first-child,
+.home-quality-table td:first-child {
+  text-align: left;
+}
+
+.home-quality-table th {
+  color: #748096;
+  font-size: 0.57rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.home-quality-table td {
+  color: #d9e0eb;
+  font-size: 0.72rem;
+}
+
+.home-quality-table td:first-child strong,
+.home-quality-table td:first-child span {
+  display: block;
+}
+
+.home-quality-table td:first-child span {
+  margin-top: 3px;
+  color: #6f7a8d;
+  font-size: 0.61rem;
+}
+
+.home-quality-status {
+  display: inline-flex;
+  padding: 4px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.home-quality-status-passed {
+  border-color: #39735a;
+  color: #8be0b0;
+  background: #142a20;
+}
+
+.home-quality-status-warning {
+  border-color: #846820;
+  color: #f2cf68;
+  background: #2b2411;
+}
+
+.home-quality-status-failed {
+  border-color: #85414c;
+  color: #f39aa6;
+  background: #30171c;
+}
+
+.home-quality-error {
+  padding: 20px;
+  color: #f39aa6;
+  font-size: 0.75rem;
+}
+
+.home-quality-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 16px;
+  border-top: 1px solid #283244;
+}
