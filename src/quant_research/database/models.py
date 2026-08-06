@@ -66,6 +66,237 @@ class Company(Base):
         nullable=False,
     )
 
+
+class MarketInstrument(Base):
+    """Identify one provider-specific tradable instrument."""
+
+    __tablename__ = "market_instruments"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_symbol",
+            "mic_code",
+            name=(
+                "uq_market_instruments_provider_symbol_mic"
+            ),
+        ),
+        Index(
+            "ix_market_instruments_company_provider",
+            "company_id",
+            "provider",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "companies.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    provider: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    provider_symbol: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    exchange: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    mic_code: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+    )
+
+    exchange_timezone: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    asset_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class MarketBar(Base):
+    """Store one version of an end-of-day market bar."""
+
+    __tablename__ = "market_bars"
+
+    __table_args__ = (
+        CheckConstraint(
+            "open_price > 0 "
+            "AND high_price > 0 "
+            "AND low_price > 0 "
+            "AND close_price > 0",
+            name="ck_market_bars_positive_prices",
+        ),
+        CheckConstraint(
+            "high_price >= open_price "
+            "AND high_price >= close_price "
+            "AND high_price >= low_price",
+            name="ck_market_bars_high_price",
+        ),
+        CheckConstraint(
+            "low_price <= open_price "
+            "AND low_price <= close_price "
+            "AND low_price <= high_price",
+            name="ck_market_bars_low_price",
+        ),
+        CheckConstraint(
+            "volume IS NULL OR volume >= 0",
+            name="ck_market_bars_nonnegative_volume",
+        ),
+        CheckConstraint(
+            "last_seen_at >= first_observed_at",
+            name="ck_market_bars_observation_order",
+        ),
+        Index(
+            "ix_market_bars_instrument_interval_date",
+            "instrument_id",
+            "interval",
+            "bar_date",
+        ),
+        Index(
+            "ix_market_bars_instrument_date_seen",
+            "instrument_id",
+            "bar_date",
+            "last_seen_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    source_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "market_instruments.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    interval: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        index=True,
+    )
+
+    bar_date: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    open_price: Mapped[Decimal] = mapped_column(
+        Numeric(24, 8),
+        nullable=False,
+    )
+
+    high_price: Mapped[Decimal] = mapped_column(
+        Numeric(24, 8),
+        nullable=False,
+    )
+
+    low_price: Mapped[Decimal] = mapped_column(
+        Numeric(24, 8),
+        nullable=False,
+    )
+
+    close_price: Mapped[Decimal] = mapped_column(
+        Numeric(24, 8),
+        nullable=False,
+    )
+
+    volume: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+    )
+
+    adjustment_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    provider: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    first_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class Filing(Base):
     __tablename__ = "filings"
 
