@@ -8,6 +8,8 @@ import {
 import type {
   DataQualityCheckSummary,
   DataQualityChecksResponse,
+  DataQualityIssue,
+  DataQualityIssuesResponse,
   DataQualityRunHistoryItem,
   DataQualityRunsResponse,
 } from '../types/pipeline'
@@ -26,6 +28,17 @@ function formatDateTime(
       timeStyle: 'short',
     },
   ).format(new Date(value))
+}
+
+function formatPeriod(
+  periodStart: string | null,
+  periodEnd: string | null,
+): string {
+  if (periodStart && periodEnd) {
+    return `${periodStart} → ${periodEnd}`
+  }
+
+  return periodEnd ?? periodStart ?? '—'
 }
 
 function checkLabel(
@@ -98,12 +111,47 @@ function DataQualityPage() {
     setError,
   ] = useState<string | null>(null)
 
+    const [
+    selectedCheckName,
+    setSelectedCheckName,
+  ] = useState<string | null>(null)
+
+  const [
+    issues,
+    setIssues,
+  ] = useState<DataQualityIssue[]>([])
+
+  const [
+    totalIssues,
+    setTotalIssues,
+  ] = useState(0)
+
+  const [
+    issuesLoading,
+    setIssuesLoading,
+  ] = useState(false)
+
+  const [
+    issuesError,
+    setIssuesError,
+  ] = useState<string | null>(null)
+
   const selectedRun = useMemo(
     () =>
       runs.find(
         (run) => run.id === selectedRunId,
       ) ?? null,
     [runs, selectedRunId],
+  )
+
+  const selectedCheck = useMemo(
+    () =>
+      checks.find(
+        (check) =>
+          check.check_name ===
+          selectedCheckName,
+      ) ?? null,
+    [checks, selectedCheckName],
   )
 
   const loadRuns = useCallback(
@@ -217,6 +265,60 @@ function DataQualityPage() {
     [],
   )
 
+  const loadIssues = useCallback(
+    async (
+      runId: number,
+      checkName: string,
+    ): Promise<void> => {
+      setIssuesLoading(true)
+      setIssuesError(null)
+
+      try {
+        const parameters =
+          new URLSearchParams({
+            check_name: checkName,
+            limit: '200',
+          })
+
+        const response = await fetch(
+          (
+            '/api/v1/data-quality/runs/' +
+            `${runId}/issues?${parameters}`
+          ),
+        )
+
+        if (!response.ok) {
+          throw new Error(
+            (
+              'Quality-issues API returned ' +
+              `HTTP ${response.status}`
+            ),
+          )
+        }
+
+        const payload =
+          await response.json() as
+            DataQualityIssuesResponse
+
+        setIssues(payload.issues)
+        setTotalIssues(payload.total_issues)
+      } catch (requestError) {
+        setIssues([])
+        setTotalIssues(0)
+
+        setIssuesError(
+          requestError instanceof Error
+            ? requestError.message
+            : 'Unable to load findings.',
+        )
+      } finally {
+        setIssuesLoading(false)
+      }
+    },
+    [],
+  )
+
+
   useEffect(() => {
     void loadRuns()
   }, [loadRuns])
@@ -244,6 +346,34 @@ function DataQualityPage() {
   }, [
     loadChecks,
     runs,
+    selectedRunId,
+  ])
+
+    useEffect(() => {
+    setSelectedCheckName(null)
+    setIssues([])
+    setTotalIssues(0)
+    setIssuesError(null)
+  }, [selectedRunId])
+
+  useEffect(() => {
+    if (
+      selectedRunId === null ||
+      selectedCheckName === null
+    ) {
+      setIssues([])
+      setTotalIssues(0)
+      setIssuesError(null)
+      return
+    }
+
+    void loadIssues(
+      selectedRunId,
+      selectedCheckName,
+    )
+  }, [
+    loadIssues,
+    selectedCheckName,
     selectedRunId,
   ])
 
@@ -512,8 +642,43 @@ function DataQualityPage() {
                 </thead>
 
                 <tbody>
-                  {checks.map((check) => (
-                    <tr key={check.check_name}>
+                  {checks.map((check) => {
+                    const isSelected =
+                      check.check_name === selectedCheckName
+
+                    const selectCheck = (): void => {
+                      setSelectedCheckName(
+                        isSelected
+                          ? null
+                          : check.check_name,
+                      )
+                    }
+
+                    return (
+                      <tr
+                        key={check.check_name}
+                        className={
+                          isSelected
+                            ? (
+                                'quality-check-row ' +
+                                'quality-check-row-selected'
+                              )
+                            : 'quality-check-row'
+                        }
+                        role="button"
+                        tabIndex={0}
+                        aria-selected={isSelected}
+                        onClick={selectCheck}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === 'Enter' ||
+                            event.key === ' '
+                          ) {
+                            event.preventDefault()
+                            selectCheck()
+                          }
+                        }}
+                      >
                       <td>
                         <strong>
                           {checkLabel(
@@ -570,11 +735,248 @@ function DataQualityPage() {
                         {' ms'}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           )}
+                  {selectedCheck && (
+          <div className="quality-issues-panel">
+            <button
+              className="quality-issues-toggle"
+              type="button"
+              onClick={() => {
+                setSelectedCheckName(null)
+              }}
+            >
+              <span>
+                {checkLabel(
+                  selectedCheck.check_name,
+                )}
+                {' · Findings'}
+              </span>
+
+              <span className="quality-issues-count">
+                {issuesLoading
+                  ? '…'
+                  : totalIssues.toLocaleString(
+                      'de-AT',
+                    )}
+              </span>
+            </button>
+
+            <div className="quality-issues-content">
+              {issuesLoading && (
+                <div className="quality-issues-state">
+                  <span className="pipeline-status-spinner" />
+
+                  Loading diagnostic findings…
+                </div>
+              )}
+
+              {!issuesLoading &&
+                issuesError && (
+                <div className="quality-issues-error">
+                  <p>
+                    {issuesError}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        selectedRunId !== null
+                      ) {
+                        void loadIssues(
+                          selectedRunId,
+                          selectedCheck.check_name,
+                        )
+                      }
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!issuesLoading &&
+                !issuesError &&
+                totalIssues === 0 && (
+                <div className="quality-issues-state">
+                  No findings for{' '}
+                  {checkLabel(
+                    selectedCheck.check_name,
+                  )}
+                  . This control completed
+                  without persisted issues.
+                </div>
+              )}
+
+              {!issuesLoading &&
+                !issuesError &&
+                totalIssues > 0 && (
+                <>
+                  <div className="quality-issues-summary">
+                    <span>
+                      {totalIssues.toLocaleString(
+                        'de-AT',
+                      )}
+                      {' findings'}
+                    </span>
+
+                    <span>
+                      Showing{' '}
+                      {issues.length.toLocaleString(
+                        'de-AT',
+                      )}
+                      {issues.length < totalIssues
+                        ? ' of all findings'
+                        : ' findings'}
+                    </span>
+                  </div>
+
+                  <div className="quality-issues-list">
+                    {issues.map((issue) => (
+                      <article
+                        key={issue.id}
+                        className={
+                          issue.blocking
+                            ? (
+                                'quality-issue-card ' +
+                                'quality-issue-card-blocking'
+                              )
+                            : 'quality-issue-card'
+                        }
+                      >
+                        <header className="quality-issue-header">
+                          <div>
+                            <div className="quality-issue-title-row">
+                              <strong>
+                                {issue.entity_key ??
+                                  (
+                                    issue.company_id !== null
+                                      ? `Company #${issue.company_id}`
+                                      : 'Platform'
+                                  )}
+                              </strong>
+
+                              <span
+                                className={
+                                  (
+                                    'quality-issue-severity ' +
+                                    'quality-issue-severity-' +
+                                    issue.severity
+                                  )
+                                }
+                              >
+                                {issue.severity}
+                              </span>
+
+                              {issue.blocking && (
+                                <span className="quality-issue-blocking">
+                                  Blocking
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="quality-issue-check">
+                              {checkLabel(
+                                issue.check_name,
+                              )}
+                            </p>
+                          </div>
+
+                          <span className="quality-issue-id">
+                            Issue #{issue.id}
+                          </span>
+                        </header>
+
+                        <p className="quality-issue-message">
+                          {issue.message}
+                        </p>
+
+                        <div className="quality-issue-metadata">
+                          <span>
+                            Metric:{' '}
+                            {issue.metric ?? '—'}
+                          </span>
+
+                          <span>
+                            Period:{' '}
+                            {formatPeriod(
+                              issue.period_start,
+                              issue.period_end,
+                            )}
+                          </span>
+
+                          <span>
+                            Available:{' '}
+                            {formatDateTime(
+                              issue.available_at,
+                            )}
+                          </span>
+                        </div>
+
+                        {(
+                          issue.actual_value !== null ||
+                          issue.expected_value !== null ||
+                          issue.context_json !== null
+                        ) && (
+                          <details className="quality-issue-details">
+                            <summary>
+                              Diagnostic details
+                            </summary>
+
+                            {issue.actual_value !== null && (
+                              <div className="quality-issue-value">
+                                <span>
+                                  Actual value
+                                </span>
+
+                                <pre>
+                                  {issue.actual_value}
+                                </pre>
+                              </div>
+                            )}
+
+                            {issue.expected_value !== null && (
+                              <div className="quality-issue-value">
+                                <span>
+                                  Expected value
+                                </span>
+
+                                <pre>
+                                  {issue.expected_value}
+                                </pre>
+                              </div>
+                            )}
+
+                            {issue.context_json !== null && (
+                              <div className="quality-issue-value">
+                                <span>
+                                  Context
+                                </span>
+
+                                <pre>
+                                  {JSON.stringify(
+                                    issue.context_json,
+                                    null,
+                                    2,
+                                  )}
+                                </pre>
+                              </div>
+                            )}
+                          </details>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </section>
     </main>
   )
