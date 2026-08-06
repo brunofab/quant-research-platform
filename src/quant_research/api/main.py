@@ -10,7 +10,7 @@ from fastapi import (
     Path,
     Query,
 )
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from quant_research.database.connection import (
     create_database_engine,
 )
 from quant_research.database.models import (
+    DataQualityCheckResult,
     DataQualityIssue,
     DataQualityRun,
     PipelineRun,
@@ -575,4 +576,157 @@ def data_quality_run_issues(
             )
             for issue in issues
         ],
+    }
+
+
+@app.get(
+    "/api/v1/data-quality/runs/{run_id}/checks"
+)
+def data_quality_run_checks(
+    run_id: Annotated[
+        int,
+        Path(ge=1),
+    ],
+    session: Annotated[
+        Session,
+        Depends(get_session),
+    ],
+) -> dict[str, object]:
+    """Return aggregated check results for one quality run."""
+
+    quality_run = session.get(
+        DataQualityRun,
+        run_id,
+    )
+
+    if quality_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Unknown data-quality run "
+                f"{run_id}."
+            ),
+        )
+
+    status_rank = func.max(
+        case(
+            (
+                DataQualityCheckResult.status
+                == "failed",
+                2,
+            ),
+            (
+                DataQualityCheckResult.status
+                == "warning",
+                1,
+            ),
+            else_=0,
+        )
+    ).label("status_rank")
+
+    first_execution_order = func.min(
+        DataQualityCheckResult.execution_order
+    ).label("execution_order")
+
+    statement = (
+        select(
+            DataQualityCheckResult.dataset,
+            DataQualityCheckResult.check_name,
+            first_execution_order,
+            status_rank,
+            func.count(
+                DataQualityCheckResult.id
+            ).label("result_rows"),
+            func.count(
+                func.distinct(
+                    DataQualityCheckResult.scope_key
+                )
+            ).label("companies_checked"),
+            func.sum(
+                DataQualityCheckResult.records_checked
+            ).label("records_checked"),
+            func.sum(
+                DataQualityCheckResult.issues_found
+            ).label("issues_found"),
+            func.sum(
+                DataQualityCheckResult.blocking_issues
+            ).label("blocking_issues"),
+            func.sum(
+                DataQualityCheckResult.duration_ms
+            ).label("duration_ms"),
+            func.max(
+                DataQualityCheckResult.duration_ms
+            ).label("maximum_duration_ms"),
+        )
+        .where(
+            DataQualityCheckResult
+            .data_quality_run_id
+            == run_id
+        )
+        .group_by(
+            DataQualityCheckResult.dataset,
+            DataQualityCheckResult.check_name,
+        )
+        .order_by(
+            first_execution_order
+        )
+    )
+
+    rows = list(
+        session.execute(
+            statement
+        ).mappings()
+    )
+
+    statuses = {
+        0: "passed",
+        1: "warning",
+        2: "failed",
+    }
+
+    checks = [
+        {
+            "dataset": row["dataset"],
+            "check_name": row["check_name"],
+            "execution_order": int(
+                row["execution_order"]
+            ),
+            "status": statuses[
+                int(row["status_rank"])
+            ],
+            "result_rows": int(
+                row["result_rows"]
+            ),
+            "companies_checked": int(
+                row["companies_checked"]
+            ),
+            "records_checked": int(
+                row["records_checked"] or 0
+            ),
+            "issues_found": int(
+                row["issues_found"] or 0
+            ),
+            "blocking_issues": int(
+                row["blocking_issues"] or 0
+            ),
+            "duration_ms": int(
+                row["duration_ms"] or 0
+            ),
+            "maximum_duration_ms": int(
+                row["maximum_duration_ms"] or 0
+            ),
+        }
+        for row in rows
+    ]
+
+    return {
+        "run": serialize_data_quality_run(
+            quality_run
+        ),
+        "total_checks": len(checks),
+        "total_result_rows": sum(
+            int(row["result_rows"])
+            for row in rows
+        ),
+        "checks": checks,
     }
