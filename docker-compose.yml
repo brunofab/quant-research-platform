@@ -69,7 +69,14 @@ services:
         condition: service_healthy
 
     ports:
-      - "127.0.0.1:8000:8000"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
 
     healthcheck:
       test:
@@ -109,6 +116,8 @@ services:
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   backend:

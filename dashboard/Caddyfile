@@ -1,24 +1,32 @@
+(common) {
+    encode zstd gzip
+
+    basic_auth {
+        {$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+research.quantresearch.tech {
+    import common
+}
+
 :8080 {
-	encode zstd gzip
-
-	basic_auth {
-		{$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}
-	}
-
-	header {
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "no-referrer"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-	}
-
-	handle /api/* {
-		reverse_proxy api:8000
-	}
-
-	handle {
-		root * /srv
-		try_files {path} /index.html
-		file_server
-	}
+    import common
 }
