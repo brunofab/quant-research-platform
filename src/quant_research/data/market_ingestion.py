@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import (
@@ -29,6 +30,29 @@ from quant_research.database.models import (
 PROVIDER = "twelve_data"
 ADJUSTMENT_TYPE = "split_adjusted"
 INTERVAL = "1day"
+
+def completed_bars(
+    time_series: DailyTimeSeries,
+    *,
+    observed_at: datetime,
+) -> tuple[DailyMarketBar, ...]:
+    """Return bars from completed exchange dates."""
+
+    exchange_timezone = ZoneInfo(
+        time_series.metadata.exchange_timezone
+    )
+
+    current_exchange_date = (
+        observed_at.astimezone(
+            exchange_timezone
+        ).date()
+    )
+
+    return tuple(
+        bar
+        for bar in time_series.bars
+        if bar.bar_date < current_exchange_date
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,9 +232,14 @@ def ingest_market_bars(
 
     metadata = time_series.metadata
 
+    bars = completed_bars(
+        time_series,
+        observed_at=observed_at,
+    )
+
     rows: list[dict[str, object]] = []
 
-    for bar in time_series.bars:
+    for bar in bars:
         source_key = (
             build_market_bar_source_key(
                 provider_symbol=(
